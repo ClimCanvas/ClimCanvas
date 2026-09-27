@@ -1,0 +1,4 @@
+[client]
+# "viewer": hide the Deploy button and the developer menu
+# ("minimal" would also remove most of the hamburger menu)
+toolbarMode = "viewer"

@@ -1,0 +1,194 @@
+{
+ "figure": {
+  "figsize": [
+   6.4,
+   4.8
+  ],
+  "dpi": 100,
+  "font_family": null,
+  "layout": {
+   "nrows": 1,
+   "ncols": 1,
+   "hspace": null,
+   "wspace": null,
+   "left": null,
+   "right": null,
+   "bottom": null,
+   "top": null
+  },
+  "shared_colorbar": {
+   "show": false,
+   "label": null,
+   "location": "right",
+   "shrink": 1.0,
+   "aspect": 30.0,
+   "pad": null,
+   "label_fontsize": null,
+   "tick_fontsize": null,
+   "outline_width": null,
+   "tick_width": null,
+   "label_pad": null,
+   "tick_pad": null,
+   "flip_ticks": false
+  }
+ },
+ "panels": [
+  {
+   "panel_id": "a",
+   "plot_type": "horizontal_map",
+   "selection": {
+    "time": "2024-01-01T06:00:00",
+    "level": 500.0
+   },
+   "region": null,
+   "projection": {
+    "name": "PlateCarree",
+    "central_longitude": 180.0,
+    "central_latitude": 0.0
+   },
+   "map": {
+    "coastlines": {
+     "show": true,
+     "color": "black",
+     "width": 0.8
+    },
+    "frame_width": null,
+    "borders": false,
+    "land": {
+     "show": false,
+     "color": "#d9d2c2"
+    },
+    "ocean": {
+     "show": false,
+     "color": "#cfe2f3"
+    },
+    "gridlines": {
+     "show": true,
+     "lines": true,
+     "labels": true,
+     "label_sides": {
+      "left": true,
+      "right": false,
+      "top": false,
+      "bottom": true
+     },
+     "label_padding": 5,
+     "color": "gray",
+     "width": 0.5,
+     "linestyle": ":",
+     "label_fontsize": null,
+     "label_rotation": null,
+     "lon_interval": null,
+     "lat_interval": null,
+     "label_lon_interval": null,
+     "label_lat_interval": null
+    },
+    "boxes": [],
+    "ticks": {
+     "show": false,
+     "lon_interval": 30.0,
+     "lat_interval": 15.0,
+     "length": 4.0,
+     "width": 0.8,
+     "direction": "out",
+     "sides": {
+      "left": true,
+      "right": false,
+      "top": false,
+      "bottom": true
+     },
+     "minor": {
+      "show": false,
+      "lon_interval": 10.0,
+      "lat_interval": 5.0,
+      "length": 2.5,
+      "width": 0.8
+     }
+    }
+   },
+   "title": "legacy map",
+   "title_fontsize": null,
+   "box_aspect": null,
+   "time_label": {
+    "show": false,
+    "text": null,
+    "loc": "left",
+    "format": null
+   },
+   "texts": [],
+   "markers": [],
+   "label": {
+    "show": false,
+    "text": "(a)",
+    "x": 0.0,
+    "y": 1.02,
+    "fontsize": 12,
+    "weight": "bold",
+    "color": "#000000",
+    "ha": "left",
+    "va": "bottom"
+   },
+   "layers": [
+    {
+     "kind": "fill",
+     "dataset_id": "ds0",
+     "variable": "t",
+     "selection": {},
+     "averages": {},
+     "style": {
+      "method": "contourf",
+      "cmap": "RdBu_r",
+      "reverse_cmap": false,
+      "vmin": 230.0,
+      "vmax": 300.0,
+      "levels": 15,
+      "extend": "both",
+      "value_scale": 1.0,
+      "value_offset": 0.0,
+      "colorbar": {
+       "show": true,
+       "label": null,
+       "location": "right",
+       "shrink": 1.0,
+       "aspect": 20.0,
+       "pad": null,
+       "label_fontsize": null,
+       "tick_fontsize": null,
+       "outline_width": null,
+       "tick_width": null,
+       "label_pad": null,
+       "tick_pad": null,
+       "flip_ticks": false
+      }
+     }
+    },
+    {
+     "kind": "contour",
+     "dataset_id": "ds0",
+     "variable": "z",
+     "selection": {},
+     "averages": {},
+     "style": {
+      "vmin": null,
+      "vmax": null,
+      "interval": null,
+      "color": "black",
+      "use_cmap": false,
+      "cmap": "viridis",
+      "reverse_cmap": false,
+      "linewidth": 1.0,
+      "linestyle": "solid",
+      "negative_linestyle": "dashed",
+      "value_scale": 1.0,
+      "value_offset": 0.0,
+      "labels": {
+       "show": true,
+       "fontsize": 8,
+       "fmt": "%g"
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

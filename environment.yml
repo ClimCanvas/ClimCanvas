@@ -1,0 +1,35 @@
+# ClimCanvas runtime environment (conda / conda-forge)
+#   create: conda env create -f environment.yml
+#   update: conda env update -f environment.yml --prune
+#
+# About the pinned versions:
+#   - matplotlib / cartopy: the image-identity tests (app rendering vs. the
+#     generated script) assume pixel-identical output within a single version.
+#     Matching the development environment keeps those tests reproducible.
+#   - proj <9.8: temporary workaround for a coastline offset that cartopy shows
+#     with PROJ 9.8 (cartopy issue #2708, fixed by cartopy PR #2653). Lift the
+#     pin once a cartopy release that includes that fix is available.
+name: climcanvas
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - xarray
+  - netcdf4
+  - numpy
+  - pandas
+  - matplotlib=3.10.8
+  - cartopy=0.25.0
+  - proj <9.8
+  - scipy
+  - cftime
+  - nc-time-axis
+  - dask
+  - streamlit
+  - pytest  # development only: needed just to run the test suite
+  # --- optional (auto-detected at start-up and offered in the UI) ---
+  # - cmocean
+  # - cmcrameri
+  # - ffmpeg    # MP4 output for animations
+  # - pip:
+  #   - cmaps   # NCL-compatible colormaps (not on conda-forge, hence pip)

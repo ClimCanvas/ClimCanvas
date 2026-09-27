@@ -1,0 +1,147 @@
+{
+ "figure": {
+  "figsize": [
+   6.4,
+   4.8
+  ],
+  "dpi": 100,
+  "font_family": null,
+  "layout": {
+   "nrows": 1,
+   "ncols": 1,
+   "hspace": null,
+   "wspace": null,
+   "left": null,
+   "right": null,
+   "bottom": null,
+   "top": null
+  },
+  "shared_colorbar": {
+   "show": false,
+   "label": null,
+   "location": "right",
+   "shrink": 1.0,
+   "aspect": 30.0,
+   "pad": null,
+   "label_fontsize": null,
+   "tick_fontsize": null,
+   "outline_width": null,
+   "tick_width": null,
+   "label_pad": null,
+   "tick_pad": null,
+   "flip_ticks": false
+  }
+ },
+ "panels": [
+  {
+   "panel_id": "a",
+   "plot_type": "section_2d",
+   "x_dim": "lon",
+   "y_dim": "level",
+   "selection": {
+    "time": "2024-01-01T06:00:00",
+    "lat": 35.0
+   },
+   "ranges": {},
+   "axis": {
+    "invert_x": false,
+    "invert_y": true,
+    "log_y": true,
+    "time_axis_format": null,
+    "x_label": "longitude",
+    "y_label": "pressure [hPa]",
+    "label_fontsize": 11,
+    "tick_fontsize": 9,
+    "grid": {
+     "show": true,
+     "color": "gray",
+     "width": 0.5,
+     "linestyle": ":"
+    }
+   },
+   "title": "legacy vsection",
+   "title_fontsize": null,
+   "time_label": {
+    "show": false,
+    "text": null,
+    "loc": "left",
+    "format": null
+   },
+   "texts": [],
+   "markers": [],
+   "label": {
+    "show": false,
+    "text": "(a)",
+    "x": 0.0,
+    "y": 1.02,
+    "fontsize": 12,
+    "weight": "bold",
+    "color": "#000000",
+    "ha": "left",
+    "va": "bottom"
+   },
+   "box_aspect": null,
+   "layers": [
+    {
+     "kind": "fill",
+     "dataset_id": "ds0",
+     "variable": "t",
+     "selection": {},
+     "averages": {},
+     "style": {
+      "method": "contourf",
+      "cmap": "coolwarm",
+      "reverse_cmap": false,
+      "vmin": 200.0,
+      "vmax": 300.0,
+      "levels": 21,
+      "extend": "both",
+      "value_scale": 1.0,
+      "value_offset": 0.0,
+      "colorbar": {
+       "show": true,
+       "label": null,
+       "location": "right",
+       "shrink": 1.0,
+       "aspect": 20.0,
+       "pad": null,
+       "label_fontsize": null,
+       "tick_fontsize": null,
+       "outline_width": null,
+       "tick_width": null,
+       "label_pad": null,
+       "tick_pad": null,
+       "flip_ticks": false
+      }
+     }
+    },
+    {
+     "kind": "contour",
+     "dataset_id": "ds0",
+     "variable": "z",
+     "selection": {},
+     "averages": {},
+     "style": {
+      "vmin": null,
+      "vmax": null,
+      "interval": null,
+      "color": "black",
+      "use_cmap": false,
+      "cmap": "viridis",
+      "reverse_cmap": false,
+      "linewidth": 1.0,
+      "linestyle": "solid",
+      "negative_linestyle": "dashed",
+      "value_scale": 1.0,
+      "value_offset": 0.0,
+      "labels": {
+       "show": true,
+       "fontsize": 8,
+       "fmt": "%g"
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

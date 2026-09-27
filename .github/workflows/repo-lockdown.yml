@@ -1,0 +1,28 @@
+# Automatically close unsolicited pull requests with a canned comment
+# (open source, closed contribution). Issues are left alone (process-only: prs).
+# The policy is described in CONTRIBUTING.md.
+name: Close unsolicited pull requests
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  lockdown:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: dessant/repo-lockdown@v5
+        with:
+          process-only: 'prs'
+          close-pr: true
+          lock-pr: false
+          pr-comment: >
+            Thank you for your interest in ClimCanvas. This project is open
+            source but not open contribution: unsolicited pull requests are
+            closed automatically so that the app and the generated scripts
+            stay in lockstep and the copyright stays single-authored.
+            Please open an issue describing the change instead; the maintainer
+            will implement it or ask you for a pull request. See CONTRIBUTING.md.

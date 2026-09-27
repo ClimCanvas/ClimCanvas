@@ -1,0 +1,123 @@
+{
+ "figure": {
+  "figsize": [
+   6.4,
+   4.8
+  ],
+  "dpi": 100,
+  "font_family": null,
+  "layout": {
+   "nrows": 1,
+   "ncols": 1,
+   "hspace": null,
+   "wspace": null,
+   "left": null,
+   "right": null,
+   "bottom": null,
+   "top": null
+  },
+  "shared_colorbar": {
+   "show": false,
+   "label": null,
+   "location": "right",
+   "shrink": 1.0,
+   "aspect": 30.0,
+   "pad": null,
+   "label_fontsize": null,
+   "tick_fontsize": null,
+   "outline_width": null,
+   "tick_width": null,
+   "label_pad": null,
+   "tick_pad": null,
+   "flip_ticks": false
+  }
+ },
+ "panels": [
+  {
+   "panel_id": "a",
+   "plot_type": "scatter_2d",
+   "x_variable": "u",
+   "y_variable": "v",
+   "z_variable": null,
+   "axis": {
+    "x_label": "u [m/s]",
+    "y_label": "v [m/s]",
+    "x_lim": null,
+    "y_lim": null,
+    "log_x": false,
+    "log_y": false,
+    "invert_x": false,
+    "invert_y": false,
+    "label_fontsize": 10,
+    "tick_fontsize": null,
+    "grid": {
+     "show_x": false,
+     "show_y": false,
+     "color": "gray",
+     "width": 0.5,
+     "linestyle": ":"
+    }
+   },
+   "title": "legacy scatter",
+   "title_fontsize": null,
+   "time_label": {
+    "show": false,
+    "text": null,
+    "loc": "left",
+    "format": null
+   },
+   "texts": [],
+   "markers": [],
+   "label": {
+    "show": false,
+    "text": "(a)",
+    "x": 0.0,
+    "y": 1.02,
+    "fontsize": 12,
+    "weight": "bold",
+    "color": "#000000",
+    "ha": "left",
+    "va": "bottom"
+   },
+   "legend": {
+    "show": true,
+    "loc": "best",
+    "fontsize": null,
+    "x": null,
+    "y": null
+   },
+   "box_aspect": null,
+   "layers": [
+    {
+     "kind": "scatter",
+     "dataset_id": "ds0",
+     "drawing_dim": "time",
+     "drawing_range": null,
+     "x_fixed": {
+      "level": 500.0,
+      "lat": 35.0,
+      "lon": 140.0
+     },
+     "y_fixed": {
+      "level": 500.0,
+      "lat": 35.0,
+      "lon": 140.0
+     },
+     "style": {
+      "color": "tab:purple",
+      "alpha": 0.7,
+      "marker": "o",
+      "size": 20.0,
+      "edge_color": "#000000",
+      "edge_linewidth": 0.0,
+      "label": "u-v",
+      "x_value_scale": 1.0,
+      "x_value_offset": 0.0,
+      "y_value_scale": 1.0,
+      "y_value_offset": 0.0
+     }
+    }
+   ]
+  }
+ ]
+}

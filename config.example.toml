@@ -1,0 +1,32 @@
+# ClimCanvas user configuration (example)
+#
+# ClimCanvas runs without any configuration file. To change the settings
+# below, copy this file to ~/.climcanvas/config.toml on the machine that runs
+# ClimCanvas (the server, for remote use) and uncomment the lines you need.
+# Every line is commented out here, so the file as it stands changes nothing.
+#
+# Paths may start with "~", which is expanded to the home directory. The file
+# is read when the app starts and when the browser page is reloaded.
+#
+# Each setting can also be given as an environment variable for a single run;
+# a variable that is set takes precedence over this file.
+
+# Directories from which netCDF files may be opened. Unset = no restriction
+# (the default for local use). When set, paths outside these directories are
+# rejected, and the native file dialog ("Browse...") is replaced by a
+# "Choose from allowed directories" browser. Recommended on shared servers.
+# Environment variable: CC_ALLOWED_DIRS (":"-separated; CC_ALLOWED_DIRS=""
+# lifts the restriction for that run).
+#allowed_dirs = ["/data/reanalysis", "/data/shared/nc"]
+
+# Directories offered in the UI as destinations for named sessions.
+# Unset = ~/.climcanvas/sessions only.
+# Environment variable: CC_SESSION_DIRS (":"-separated).
+#session_dirs = ["~/.climcanvas/sessions", "~/projects/exp2026/sessions"]
+
+# Set to "remote" when ClimCanvas runs on a server that users reach through a
+# browser: the session tabs then read "From the server" / "To the server"
+# instead of "From this PC" / "To this PC". Unset = local. The mode is never
+# inferred from the connection.
+# Environment variable: CC_MODE ("remote"; anything else means local).
+#mode = "remote"

@@ -1,0 +1,99 @@
+name: Bug report
+description: Something does not work, or a figure or a generated script looks wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting. Reports in Japanese are welcome (日本語での報告も歓迎します).
+
+        **This issue will be public.** Do not paste unpublished data, figures, or
+        anything else you cannot share publicly.
+        No GitHub account? Use the
+        [feedback form](https://docs.google.com/forms/d/e/1FAIpQLSc-tnfYzsqcctESephPCJqbht_TQRl6TPw8NE7sgkmlcAZ68w/viewform)
+        ([Japanese](https://docs.google.com/forms/d/e/1FAIpQLSe-zXza-DXr8eGdOIgLKBH98luuLQdCooD6fcjCO3fA3gvuKw/viewform)) instead.
+        Bugs known to affect figure values are listed in
+        [KNOWN_ISSUES.md](https://github.com/ClimCanvas/ClimCanvas/blob/main/KNOWN_ISSUES.md).
+  - type: input
+    id: version
+    attributes:
+      label: ClimCanvas version
+      description: Shown under the app title (e.g. "ver 0.98") and in the first line of a reproduction script.
+      placeholder: "0.98"
+    validations:
+      required: true
+  - type: dropdown
+    id: affects_values
+    attributes:
+      label: Does this affect the values shown in the figure?
+      description: >-
+        For example a wrong level, time, average, mask or unit, as opposed to layout,
+        labels, colors or fonts. Choose "Not sure" if you cannot tell.
+      options:
+        - Not sure
+        - "No: appearance only (layout, labels, colors, fonts)"
+        - "Yes: the figure or the script shows wrong values"
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where did it happen?
+      options:
+        - In the app
+        - In a generated reproduction script
+        - Both in the app and in the script
+        - Installation or startup
+        - Other
+  - type: dropdown
+    id: run_mode
+    attributes:
+      label: How do you run ClimCanvas?
+      options:
+        - On my own computer
+        - On a remote server (SSH port forwarding or a reverse proxy)
+        - On a server prepared for a class or a demo
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: Include the error message or a screenshot (images can be pasted here).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Load ...
+        2. Choose ...
+        3. ...
+  - type: textarea
+    id: data_header
+    attributes:
+      label: Data (header only)
+      description: >-
+        Output of `ncdump -h file.nc`. The data itself is usually not needed.
+        Remove anything you cannot share publicly.
+      render: text
+  - type: textarea
+    id: session
+    attributes:
+      label: Session JSON or settings
+      description: >-
+        Use "Save session" in the app and paste the JSON, or describe the settings you used.
+        Remove file paths you do not want to share.
+      render: json
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: >-
+        OS and the versions of Python, matplotlib, cartopy, PROJ, xarray and Streamlit.
+        Run this in the environment where ClimCanvas runs and paste the output:
+        `python -c "import platform, sys, matplotlib, cartopy, pyproj, xarray, streamlit; print(platform.platform()); print('python', sys.version.split()[0]); print('matplotlib', matplotlib.__version__); print('cartopy', cartopy.__version__); print('PROJ', pyproj.proj_version_str); print('xarray', xarray.__version__); print('streamlit', streamlit.__version__)"`
+      render: text

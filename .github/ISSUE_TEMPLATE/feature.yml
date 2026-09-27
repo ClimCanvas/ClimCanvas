@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest a new plot type, an option, or another improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the suggestion. Requests in Japanese are welcome (日本語での要望も歓迎します).
+
+        Requests are considered at the maintainer's pace, without a promise of
+        implementation. Pull requests are not accepted; the maintainer implements
+        accepted requests (see [CONTRIBUTING.md](https://github.com/ClimCanvas/ClimCanvas/blob/main/CONTRIBUTING.md)).
+        **This issue will be public.** Do not paste unpublished data or figures.
+        No GitHub account, or just a comment? Use the
+        [feedback form](https://docs.google.com/forms/d/e/1FAIpQLSc-tnfYzsqcctESephPCJqbht_TQRl6TPw8NE7sgkmlcAZ68w/viewform)
+        ([Japanese](https://docs.google.com/forms/d/e/1FAIpQLSe-zXza-DXr8eGdOIgLKBH98luuLQdCooD6fcjCO3fA3gvuKw/viewform)) instead.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What would you like to do?
+      description: Describe the figure or the task, e.g. the kind of plot and the data you want to show.
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: How do you do it now?
+      description: Any workaround, e.g. editing the reproduction script by hand, or another tool.
+  - type: textarea
+    id: reference
+    attributes:
+      label: Examples or references
+      description: A figure from a paper, the same feature in another tool (GrADS, NCL, Ferret, ...), or a sketch. Images can be pasted here.
+  - type: input
+    id: version
+    attributes:
+      label: ClimCanvas version
+      description: Shown under the app title (e.g. "ver 0.98").
+      placeholder: "0.98"

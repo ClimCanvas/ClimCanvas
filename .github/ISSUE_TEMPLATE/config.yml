@@ -1,0 +1,15 @@
+# New issue の選択画面: バグ用・要望用のフォームの下に、GitHub を使わない窓口への
+# リンクを並べる。contact_links の url は https のみ (mailto は GitHub のスキーマで弾かれる)
+# ので、メールは README の Contact 節を指す。フォームの URL はアプリの About と同じ
+# (docs/feedback_channels_plan.md 2 節。tests/test_issue_templates.py が構造を検査)
+blank_issues_enabled: false
+contact_links:
+  - name: Feedback form (no GitHub account needed)
+    url: https://docs.google.com/forms/d/e/1FAIpQLSc-tnfYzsqcctESephPCJqbht_TQRl6TPw8NE7sgkmlcAZ68w/viewform
+    about: Comments, impressions, requests and difficulties in using ClimCanvas. Responses are not public.
+  - name: ご意見・ご要望フォーム (GitHub アカウント不要)
+    url: https://docs.google.com/forms/d/e/1FAIpQLSe-zXza-DXr8eGdOIgLKBH98luuLQdCooD6fcjCO3fA3gvuKw/viewform
+    about: 感想・要望・使い方で困ったことを日本語で。回答は公開されません。
+  - name: Other questions (email)
+    url: https://github.com/ClimCanvas/ClimCanvas#contact
+    about: For anything else, write to the address in the Contact section of the README.

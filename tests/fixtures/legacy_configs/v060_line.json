@@ -1,0 +1,135 @@
+{
+ "figure": {
+  "figsize": [
+   6.4,
+   4.8
+  ],
+  "dpi": 100,
+  "font_family": null,
+  "layout": {
+   "nrows": 1,
+   "ncols": 1,
+   "hspace": null,
+   "wspace": null,
+   "left": null,
+   "right": null,
+   "bottom": null,
+   "top": null
+  },
+  "shared_colorbar": {
+   "show": false,
+   "label": null,
+   "location": "right",
+   "shrink": 1.0,
+   "aspect": 30.0,
+   "pad": null,
+   "label_fontsize": null,
+   "tick_fontsize": null,
+   "outline_width": null,
+   "tick_width": null,
+   "label_pad": null,
+   "tick_pad": null,
+   "flip_ticks": false
+  }
+ },
+ "panels": [
+  {
+   "panel_id": "a",
+   "plot_type": "line_1d",
+   "x_dim": "lon",
+   "selection": {
+    "time": "2024-01-01T00:00:00",
+    "level": 500.0,
+    "lat": 35.0
+   },
+   "ranges": {},
+   "axis": {
+    "x_label": "longitude",
+    "y_label": "u [m/s]",
+    "x_lim": null,
+    "y_lim": null,
+    "log_x": false,
+    "log_y": false,
+    "invert_x": false,
+    "invert_y": false,
+    "time_axis_format": null,
+    "tight_x": true,
+    "cyclic_x": false,
+    "bar_mode": "overlap",
+    "bar_dodge_gap": 0.05,
+    "show_x_ticklabels": true,
+    "show_y_ticklabels": true,
+    "x_tick_interval": null,
+    "y_tick_interval": null,
+    "x_tick_positions": null,
+    "y_tick_positions": null,
+    "x_tick_labels": null,
+    "y_tick_labels": null,
+    "show_x_minor_ticks": false,
+    "show_y_minor_ticks": false,
+    "label_fontsize": null,
+    "label_color": null,
+    "label_weight": "normal",
+    "label_italic": false,
+    "label_pad": null,
+    "x_label_rotation": null,
+    "y_label_rotation": null,
+    "tick_fontsize": null,
+    "grid": {
+     "show_x": true,
+     "show_y": true,
+     "color": "gray",
+     "width": 0.5,
+     "linestyle": ":"
+    }
+   },
+   "legend": {
+    "show": true,
+    "loc": "best",
+    "fontsize": null,
+    "x": null,
+    "y": null
+   },
+   "title": "legacy line",
+   "title_fontsize": null,
+   "time_label": {
+    "show": false,
+    "text": null,
+    "loc": "left",
+    "format": null
+   },
+   "texts": [],
+   "markers": [],
+   "label": {
+    "show": false,
+    "text": "(a)",
+    "x": 0.0,
+    "y": 1.02,
+    "fontsize": 12,
+    "weight": "bold",
+    "color": "#000000",
+    "ha": "left",
+    "va": "bottom"
+   },
+   "box_aspect": null,
+   "layers": [
+    {
+     "kind": "line",
+     "dataset_id": "ds0",
+     "variable": "u",
+     "selection": {},
+     "averages": {},
+     "style": {
+      "color": "tab:blue",
+      "linewidth": 1.5,
+      "linestyle": "solid",
+      "marker": null,
+      "label": "U",
+      "value_scale": 1.0,
+      "value_offset": 0.0
+     }
+    }
+   ]
+  }
+ ]
+}

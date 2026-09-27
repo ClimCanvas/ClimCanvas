@@ -1,0 +1,25 @@
+# Citation metadata (Citation File Format 1.2.0). GitHub shows it under
+# "Cite this repository"; Zenodo reads it when a release is archived.
+# Update `version` and `date-released` at every release (and add `doi` once
+# a Zenodo DOI exists).
+cff-version: 1.2.0
+message: "If you use ClimCanvas, please cite it with the version you used."
+type: software
+title: "ClimCanvas"
+abstract: "A browser-based GUI for plotting atmospheric and ocean data in netCDF, with export of standalone reproduction scripts."
+authors:
+  - family-names: "Mori"
+    given-names: "Masato"
+version: "1.00"
+date-released: "2026-09-27"
+license: "AGPL-3.0-only"
+repository-code: "https://github.com/ClimCanvas/ClimCanvas"
+url: "https://github.com/ClimCanvas/ClimCanvas"
+keywords:
+  - netCDF
+  - visualization
+  - atmospheric science
+  - oceanography
+  - climate
+  - matplotlib
+  - cartopy

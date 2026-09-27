@@ -1,0 +1,18 @@
+# ruff (static analysis) settings.
+# install:  python -m pip install ruff
+# run:      python -m ruff check .
+line-length = 100
+target-version = "py312"
+extend-exclude = ["temp", "scripts/make_logos*.py", "scripts/make_slide*.py"]
+
+[lint]
+# E/W: pycodestyle, F: pyflakes (unused imports, undefined names, ...)
+select = ["E", "F", "W"]
+ignore = [
+    "E501",  # long lines (frequent in comments and help strings)
+    "E402",  # imports not at the top of the file (app.py imports after st.set_page_config by design)
+]
+
+[lint.per-file-ignores]
+# imports that only probe whether an optional colormap package is installed (leaving them unused is correct)
+"climcanvas/core/external_cmaps.py" = ["F401"]
