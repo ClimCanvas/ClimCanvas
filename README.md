@@ -6,8 +6,8 @@ plots, scatter plots and more from a sidebar, then export the result as an image
 or animation, or as a **standalone Python script** (xarray / matplotlib /
 cartopy) that reproduces the figure exactly and can be edited by hand.
 
-A Japanese project website with a user guide is maintained separately from
-this repository.
+Website (in Japanese): <https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/> — with the
+[user manual](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/manual/index.html) and the [FAQ](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/faq.html).
 
 ## Features
 
@@ -79,7 +79,9 @@ python -m streamlit run app.py
 
 Open the URL that Streamlit prints, choose a netCDF file, build the figure in
 the sidebar, and use the download buttons for PNG / SVG / PDF / EPS, GIF / MP4,
-or the reproduction script.
+or the reproduction script. The [user manual](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/manual/index.html)
+(Japanese) covers the sidebar, every layer type and the numerical conventions;
+the [FAQ](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/faq.html) collects common questions and error messages.
 
 ClimCanvas needs no configuration file. An optional `~/.climcanvas/config.toml`
 on the machine that runs the app can restrict which directories netCDF files
@@ -119,8 +121,11 @@ python -m pytest -q
 
 A software description paper is in preparation. Until it is published, please
 cite this repository with the version you used; `CITATION.cff` holds the
-citation metadata (GitHub shows it under "Cite this repository"). A Zenodo
-DOI will be added with the first public release.
+citation metadata (GitHub shows it under "Cite this repository"). Releases are
+archived on Zenodo: the concept DOI
+[10.5281/zenodo.22997360](https://doi.org/10.5281/zenodo.22997360) always
+resolves to the latest version, and each release also has its own version DOI
+(v1.00: [10.5281/zenodo.22997361](https://doi.org/10.5281/zenodo.22997361)).
 
 ## Contributing
 

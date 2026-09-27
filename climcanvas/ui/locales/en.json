@@ -1163,6 +1163,7 @@
  "2 次元座標格子: 成分を東西・南北とみなして描く (格子相対風の回転なし)": "curvilinear grid: components are taken as eastward and northward (grid-relative winds are not rotated)",
  "平均範囲内の欠損 {n} / {total} 要素 (平均から除外)": "missing values in the averaged range: {n} of {total} elements (excluded from the mean)",
  "ご意見・ご要望 (GitHub アカウント不要): [Google フォーム]({url})": "Feedback and requests (no GitHub account needed): [Google Form]({url})",
- "バグ報告・機能の要望: [GitHub Issues]({url})": "Bug reports and feature requests: [GitHub Issues]({url})",
+ "バグ報告・機能の要望 (GitHub Issues): [バグ報告]({bug_url}) / [機能の要望]({feature_url})": "Bug reports and feature requests (GitHub Issues): [Bug report]({bug_url}) / [Feature request]({feature_url})",
+ "Web サイト (マニュアル・FAQ、日本語): [atmos.rcast.u-tokyo.ac.jp/climcanvas]({url})": "Website (manual and FAQ, in Japanese): [atmos.rcast.u-tokyo.ac.jp/climcanvas]({url})",
  "ライセンス: [{license}]({url})": "License: [{license}]({url})"
 }

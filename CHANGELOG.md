@@ -8,6 +8,20 @@ versions and are not listed.
 
 ## Unreleased
 
+## 1.00.1 — 2026-09-28
+
+### Added
+
+- Links to the project website (in Japanese, with the user manual and FAQ) from the README, the issue forms, `CITATION.cff` and the "About" menu.
+
+### Changed
+
+- `CITATION.cff` and the README now carry the Zenodo concept DOI (10.5281/zenodo.22997360). Every release is archived on Zenodo with its own version DOI.
+
+### Fixed
+
+- "About" in the app menu now opens the bug report and feature request forms directly, with the version filled in; the form chooser page did not carry the version over. The version placeholder in the forms was updated.
+
 ## 1.00 — 2026-09-27
 
 First public release. The entries below list the changes since the last

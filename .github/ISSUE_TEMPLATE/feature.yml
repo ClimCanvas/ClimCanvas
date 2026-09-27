@@ -14,6 +14,7 @@ body:
         No GitHub account, or just a comment? Use the
         [feedback form](https://docs.google.com/forms/d/e/1FAIpQLSc-tnfYzsqcctESephPCJqbht_TQRl6TPw8NE7sgkmlcAZ68w/viewform)
         ([Japanese](https://docs.google.com/forms/d/e/1FAIpQLSe-zXza-DXr8eGdOIgLKBH98luuLQdCooD6fcjCO3fA3gvuKw/viewform)) instead.
+        The [user manual](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/manual/index.html) and [FAQ](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/faq.html) are in Japanese.
   - type: textarea
     id: goal
     attributes:
@@ -35,5 +36,5 @@ body:
     id: version
     attributes:
       label: ClimCanvas version
-      description: Shown under the app title (e.g. "ver 0.98").
-      placeholder: "0.98"
+      description: Shown under the app title (e.g. "ver 1.00").
+      placeholder: "1.00"

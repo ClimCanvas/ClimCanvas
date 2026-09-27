@@ -1,7 +1,7 @@
 # Citation metadata (Citation File Format 1.2.0). GitHub shows it under
 # "Cite this repository"; Zenodo reads it when a release is archived.
-# Update `version` and `date-released` at every release (and add `doi` once
-# a Zenodo DOI exists).
+# Update `version` and `date-released` at every release. `doi` is the Zenodo
+# concept DOI (all versions; it resolves to the latest one) and does not change.
 cff-version: 1.2.0
 message: "If you use ClimCanvas, please cite it with the version you used."
 type: software
@@ -10,11 +10,12 @@ abstract: "A browser-based GUI for plotting atmospheric and ocean data in netCDF
 authors:
   - family-names: "Mori"
     given-names: "Masato"
-version: "1.00"
-date-released: "2026-09-27"
+version: "1.00.1"
+date-released: "2026-09-28"
+doi: "10.5281/zenodo.22997360"
 license: "AGPL-3.0-only"
 repository-code: "https://github.com/ClimCanvas/ClimCanvas"
-url: "https://github.com/ClimCanvas/ClimCanvas"
+url: "https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/"
 keywords:
   - netCDF
   - visualization

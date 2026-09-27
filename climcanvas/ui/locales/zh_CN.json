@@ -1163,6 +1163,7 @@
  "2 次元座標格子: 成分を東西・南北とみなして描く (格子相対風の回転なし)": "二维坐标网格: 分量按东西向和南北向绘制 (不旋转网格相对风)",
  "平均範囲内の欠損 {n} / {total} 要素 (平均から除外)": "平均范围内缺测 {n} / {total} 个元素 (平均时排除)",
  "ご意見・ご要望 (GitHub アカウント不要): [Google フォーム]({url})": "意见与建议 (无需 GitHub 账号)：[Google 表单]({url})",
- "バグ報告・機能の要望: [GitHub Issues]({url})": "错误报告与功能请求：[GitHub Issues]({url})",
+ "バグ報告・機能の要望 (GitHub Issues): [バグ報告]({bug_url}) / [機能の要望]({feature_url})": "错误报告与功能请求（GitHub Issues）：[错误报告]({bug_url}) / [功能请求]({feature_url})",
+ "Web サイト (マニュアル・FAQ、日本語): [atmos.rcast.u-tokyo.ac.jp/climcanvas]({url})": "网站（手册与 FAQ，日文）：[atmos.rcast.u-tokyo.ac.jp/climcanvas]({url})",
  "ライセンス: [{license}]({url})": "许可证：[{license}]({url})"
 }

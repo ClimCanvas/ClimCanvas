@@ -28,9 +28,12 @@ FEEDBACK_FORMS = {
 # 版の質問を作り直すと番号が変わり、版が事前入力されなくなる
 FEEDBACK_VERSION_ENTRY = "entry.2010447076"
 REPO_URL = "https://github.com/ClimCanvas/ClimCanvas"
-# Issue フォーム (bug.yml / feature.yml) の版の欄の id。選択画面に渡したクエリは
-# 選んだフォームに引き継がれる
+SITE_URL = "https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/"   # 公式サイト (日本語。マニュアル・FAQ)
+# Issue フォーム (bug.yml / feature.yml) の版の欄の id。選択画面 (issues/new/choose) は
+# クエリを選んだフォームに引き継がない (2026-09-27 に公開側で確認) ので、テンプレートを
+# 直接指定した URL を種別ごとに出す
 ISSUE_VERSION_FIELD = "version"
+ISSUE_TEMPLATES = {"bug": "bug.yml", "feature": "feature.yml"}
 
 
 def display_version(version: str = __version__) -> str:
@@ -44,8 +47,8 @@ def feedback_form_url(lang: str, version: str) -> str:
     return f"{base}?usp=pp_url&{FEEDBACK_VERSION_ENTRY}={quote(version)}"
 
 
-def new_issue_url(version: str) -> str:
-    return f"{REPO_URL}/issues/new/choose?{ISSUE_VERSION_FIELD}={quote(version)}"
+def new_issue_url(version: str, template: str = "bug.yml") -> str:
+    return f"{REPO_URL}/issues/new?template={template}&{ISSUE_VERSION_FIELD}={quote(version)}"
 
 
 def about_markdown() -> str:
@@ -55,8 +58,11 @@ def about_markdown() -> str:
         "",
         "- " + t("ご意見・ご要望 (GitHub アカウント不要): [Google フォーム]({url})",
                  url=feedback_form_url(current_lang(), ver)),
-        "- " + t("バグ報告・機能の要望: [GitHub Issues]({url})",
-                 url=new_issue_url(ver)),
+        "- " + t("バグ報告・機能の要望 (GitHub Issues): [バグ報告]({bug_url}) / [機能の要望]({feature_url})",
+                 bug_url=new_issue_url(ver, ISSUE_TEMPLATES["bug"]),
+                 feature_url=new_issue_url(ver, ISSUE_TEMPLATES["feature"])),
+        "- " + t("Web サイト (マニュアル・FAQ、日本語): [atmos.rcast.u-tokyo.ac.jp/climcanvas]({url})",
+                 url=SITE_URL),
         "- " + t("ライセンス: [{license}]({url})", license="AGPL-3.0-only",
                  url=f"{REPO_URL}/blob/main/LICENSE"),
     ])

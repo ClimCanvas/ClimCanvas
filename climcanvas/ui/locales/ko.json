@@ -1163,6 +1163,7 @@
  "2 次元座標格子: 成分を東西・南北とみなして描く (格子相対風の回転なし)": "2차원 좌표 격자: 성분을 동서·남북 성분으로 간주하여 그림 (격자 상대 바람은 회전하지 않음)",
  "平均範囲内の欠損 {n} / {total} 要素 (平均から除外)": "평균 범위 내 결측 {n} / {total} 요소 (평균에서 제외)",
  "ご意見・ご要望 (GitHub アカウント不要): [Google フォーム]({url})": "의견·요청 (GitHub 계정 불필요): [Google 설문지]({url})",
- "バグ報告・機能の要望: [GitHub Issues]({url})": "버그 신고·기능 요청: [GitHub Issues]({url})",
+ "バグ報告・機能の要望 (GitHub Issues): [バグ報告]({bug_url}) / [機能の要望]({feature_url})": "버그 신고·기능 요청 (GitHub Issues): [버그 신고]({bug_url}) / [기능 요청]({feature_url})",
+ "Web サイト (マニュアル・FAQ、日本語): [atmos.rcast.u-tokyo.ac.jp/climcanvas]({url})": "웹사이트 (매뉴얼·FAQ, 일본어): [atmos.rcast.u-tokyo.ac.jp/climcanvas]({url})",
  "ライセンス: [{license}]({url})": "라이선스: [{license}]({url})"
 }

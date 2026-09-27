@@ -11,6 +11,7 @@ UI 言語ごとに正しいフィードバックフォーム (ja → 日本語�
 
 from __future__ import annotations
 
+import pathlib
 import re
 
 import pytest
@@ -24,7 +25,7 @@ _HAN = re.compile(r"[一-龠]")
 
 
 @pytest.mark.parametrize("version, shown", [
-    ("0.98.0", "0.98"), ("1.0.0", "1.0"), ("0.90.1", "0.90.1")])
+    ("0.98.0", "0.98"), ("1.0.0", "1.0"), ("0.90.1", "0.90.1"), ("1.00", "1.00"), ("1.00.1", "1.00.1")])
 def test_display_version(version, shown):
     assert about.display_version(version) == shown
 
@@ -39,8 +40,18 @@ def test_feedback_form_url_follows_ui_language(lang):
 
 
 def test_new_issue_url_prefills_version():
-    assert about.new_issue_url("0.98") == (
-        "https://github.com/ClimCanvas/ClimCanvas/issues/new/choose?version=0.98")
+    """選択画面 (issues/new/choose) は版を引き継がないので、テンプレートを直接指定する。"""
+    assert about.new_issue_url("0.98", "bug.yml") == (
+        "https://github.com/ClimCanvas/ClimCanvas/issues/new?template=bug.yml&version=0.98")
+    assert about.new_issue_url("1.00", "feature.yml") == (
+        "https://github.com/ClimCanvas/ClimCanvas/issues/new?template=feature.yml&version=1.00")
+
+
+def test_issue_templates_exist():
+    """About が指すテンプレート名が .github/ISSUE_TEMPLATE/ に実在する。"""
+    root = pathlib.Path(__file__).resolve().parent.parent / ".github" / "ISSUE_TEMPLATE"
+    for name in about.ISSUE_TEMPLATES.values():
+        assert (root / name).is_file(), name
 
 
 @pytest.mark.parametrize("lang", sorted(i18n.LANG_LABELS))
@@ -51,10 +62,12 @@ def test_about_markdown(lang, monkeypatch):
     ver = about.display_version()
     assert f"ver {ver}" in md
     assert about.feedback_form_url(lang, ver) in md
-    assert about.new_issue_url(ver) in md
+    assert about.new_issue_url(ver, "bug.yml") in md
+    assert about.new_issue_url(ver, "feature.yml") in md
     assert "AGPL-3.0-only" in md and "/blob/main/LICENSE" in md
-    # Markdown のリンクが 3 本とも崩れていない
-    assert len(re.findall(r"\[[^\]]+\]\(https://[^)\s]+\)", md)) == 3
+    assert about.SITE_URL in md
+    # Markdown のリンクが 5 本とも崩れていない
+    assert len(re.findall(r"\[[^\]]+\]\(https://[^)\s]+\)", md)) == 5
     if lang != "ja":
         assert not _KANA.search(md), md
     if lang in ("en", "ko"):
