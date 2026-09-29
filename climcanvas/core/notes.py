@@ -34,6 +34,19 @@ ui/notes_ui.py が訳す)。
   矢印を描かない (style.mask_below)。
 - ``{"type": "vector_no_rotation", ...}`` 2 次元座標格子 (curvilinear) の
   ベクトル・流線は成分を東西・南北とみなして描く (格子相対風を回転しない)。
+- ``{"type": "error_untransformed", ..., "variables": [本体], "axis",
+  "err_variable": str | None, "err_constant": float | None, "err_units",
+  "scale", "offset"}`` エラー量 (棒グラフ・散布図・バブル) には値の変換を掛けない
+  (2026-09-29 の仕様) ので、本体に変換があるときに知らせる。err_variable None =
+  定数のエラー量。
+- ``{"type": "error_units_mismatch", ..., "err_variable", "err_units",
+  "main_units"}`` 本体に変換が無く、誤差変数と本体の units 属性の文字列が違うとき。
+- ``{"type": "axis_units_mixed", "layer_index": None, "kind": None,
+  "value_axis": "y"|"y2"|"x", "entries": [{"variable", "dataset_id", "units",
+  "scale", "offset"}, ...]}`` 1 次元プロットで同じ値の軸 (左の縦軸 / 右の第 2 軸 /
+  横棒の横軸) に、units 属性 (分かるものどうし) か値の変換が違う量が重なるとき。
+  units の比較は文字列だけ (「m/s」と「m s-1」も違うと判定する) なので、表示は
+  「違う可能性」に留める。
 
 全項目に ``"dataset_id"`` と ``"units": {変数名: units 属性 | None}`` を付ける
 (表示は変数名の横に単位を添える。二重の単位換算に気づくため)。
@@ -48,7 +61,7 @@ from __future__ import annotations
 
 from .dataset import detect_coord_roles, is_curvilinear
 from .render import (averaging_slice, effective_averages, layer_averaging_stats,
-                     maskout_var_config, vector_v_dataset_id)
+                     line_uses_secondary_axis, maskout_var_config, vector_v_dataset_id)
 
 # 加算 (value_offset) を持たない種別 (両成分に同じ倍率だけ掛ける)
 _SCALE_ONLY_KINDS = ("vector", "stream")
@@ -187,6 +200,117 @@ def _vector_entries(layer: dict, base: dict, datasets: dict) -> list[dict]:
     return out
 
 
+def _units_of(ds, var: str | None) -> str | None:
+    """変数の units 属性 (空・無しは None)。_attach_units と同じ取り方。"""
+    if ds is None or not var or var not in ds:
+        return None
+    u = ds[var].attrs.get("units")
+    return None if u in (None, "") else str(u)
+
+
+def _same_units(a: str, b: str) -> bool:
+    """units 属性の文字列比較 (前後と連続する空白の差だけは無視する)。"""
+    return " ".join(a.split()) == " ".join(b.split())
+
+
+def _error_specs(panel: dict, layer: dict) -> list[tuple]:
+    """(軸, 本体の変数, 誤差変数 | None, 定数の誤差 | None) の組。
+
+    render._bar_error_values / _scatter_error_arrays が誤差を描く条件と同じ
+    (棒の定数 0 は描かない。散布系の誤差変数は x / y 独立。hexbin は誤差なし)。
+    """
+    kind = layer.get("kind")
+    eb = (layer.get("style") or {}).get("errorbar") or {}
+    if kind == "bar":
+        src = eb.get("source", "none")
+        if src == "variable" and eb.get("variable"):
+            return [(None, layer.get("variable"), eb["variable"], None)]
+        if src == "constant" and float(eb.get("constant", 0.0)) != 0.0:
+            return [(None, layer.get("variable"), None, abs(float(eb["constant"])))]
+        return []
+    if kind in ("scatter", "bubble"):
+        return [(axis, panel.get(f"{axis}_variable"), eb[f"{axis}_variable"], None)
+                for axis in ("x", "y") if eb.get(f"{axis}_variable")]
+    return []
+
+
+def _error_entries(panel: dict, layer: dict, base: dict, datasets: dict) -> list[dict]:
+    """エラー量に値の変換を掛けないことの通知と、誤差と本体の units の食い違い。"""
+    ds = datasets.get(layer.get("dataset_id"))
+    style = layer.get("style") or {}
+    out = []
+    for axis, main, err_var, err_const in _error_specs(panel, layer):
+        if not main or (err_var is not None and (ds is None or err_var not in ds)):
+            continue
+        prefix = f"{axis}_" if axis else ""
+        scale = float(style.get(f"{prefix}value_scale", 1.0))
+        offset = float(style.get(f"{prefix}value_offset", 0.0))
+        err_units = _units_of(ds, err_var)
+        common = {**base, "variables": [main], "axis": axis, "err_variable": err_var,
+                  "err_constant": err_const, "err_units": err_units}
+        if not _is_identity(scale, offset):
+            out.append({**common, "type": "error_untransformed",
+                        "scale": scale, "offset": offset})
+        elif err_var is not None:
+            main_units = _units_of(ds, main)
+            if main_units and err_units and not _same_units(main_units, err_units):
+                out.append({**common, "type": "error_units_mismatch",
+                            "main_units": main_units})
+    return out
+
+
+def _line_value_axis(panel: dict, layer: dict) -> str:
+    """1 次元プロットでレイヤーの値が載る軸 (render._render_line_1d の描き分けと同じ)。
+
+    横棒 (barh) は値が横軸。secondary_y のレイヤーは右の第 2 軸 (twinx)。
+    """
+    style = layer.get("style") or {}
+    if layer.get("kind") == "bar" and style.get("orientation") == "horizontal":
+        return "x"
+    if style.get("secondary_y") and line_uses_secondary_axis(panel):
+        return "y2"
+    return "y"
+
+
+def _line_axis_entries(panel: dict, base: dict, datasets: dict) -> list[dict]:
+    """同じ値の軸に units 属性か値の変換が違う量が重なっていれば、軸ごとに 1 項目。
+
+    量 = 各レイヤーの描画変数 (_layer_variables: 線・束・棒は 1 つ、帯は下側と上側、
+    積み上げは全変数)。エラー量は含めない (_error_entries で扱う)。units の分からない
+    量は units の比較から外す (値の変換の比較には入れる)。
+    """
+    if panel.get("plot_type") != "line_1d":
+        return []
+    by_axis: dict[str, list[dict]] = {}
+    for layer in panel.get("layers") or []:
+        ds = datasets.get(layer.get("dataset_id"))
+        style = layer.get("style") or {}
+        scale = float(style.get("value_scale", 1.0))
+        offset = float(style.get("value_offset", 0.0))
+        for var in _layer_variables(layer):
+            by_axis.setdefault(_line_value_axis(panel, layer), []).append(
+                {"variable": var, "dataset_id": layer.get("dataset_id"),
+                 "units": _units_of(ds, var), "scale": scale, "offset": offset})
+    out = []
+    for axis in ("y", "y2", "x"):
+        entries = by_axis.get(axis) or []
+        known = []
+        for e in entries:
+            if e["units"] and not any(_same_units(e["units"], k) for k in known):
+                known.append(e["units"])
+        transforms = {(e["scale"], e["offset"]) for e in entries}
+        if len(known) > 1 or len(transforms) > 1:
+            # 同じ (変数, データセット, 変換) は 1 つにまとめる (帯の上下が同じ変数など)
+            uniq = []
+            for e in entries:
+                if e not in uniq:
+                    uniq.append(e)
+            out.append({**base, "type": "axis_units_mixed", "layer_index": None,
+                        "kind": None, "dataset_id": None, "variables": [],
+                        "value_axis": axis, "entries": uniq})
+    return out
+
+
 def _average_specs(layer: dict) -> list[tuple[str | None, str, dict | None]]:
     """(変数名, dataset_id, averages) の組。fill_between の上側は averages_upper。"""
     kind = layer.get("kind")
@@ -297,6 +421,8 @@ def collect_notes(figure_config: dict, datasets: dict) -> list[dict]:
                 notes.extend(_maskout_entries(layer.get("style") or {}, lbase,
                                               _layer_variables(layer)))
             notes.extend(_vector_entries(layer, lbase, datasets))
+            notes.extend(_error_entries(panel, layer, lbase, datasets))
             notes.extend(_average_entries(panel, layer, lbase, datasets))
+        notes.extend(_line_axis_entries(panel, base, datasets))
     _attach_units(notes, datasets)
     return notes

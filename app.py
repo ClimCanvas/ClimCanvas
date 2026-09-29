@@ -73,8 +73,9 @@ from climcanvas.ui.widgets import (available_font_families,
                                    color_selector, common_fonts_available,
                                    fontsize_input, linked_range_ui,
                                    linked_time_range_ui, maskout_ui,
-                                   parse_float_list,
+                                   md_plain, parse_float_list,
                                    parse_ratio_list, section_header,
+                                   shorten_label,
                                    time_labels_and_values, union_coord_values,
                                    value_transform_ui, var_label)
 
@@ -287,13 +288,20 @@ with st.sidebar:
                        t("この PC に保存されているセッションを選んで復元する"))
             _restore_dirs = _load_session_dirs()
             _restore_dir = _restore_dirs[0]
+            # サイドバーの selectbox は 1 行固定で長い名前の末尾が「…」に
+            # 落ちるため、表示は shorten_label (ホーム → ~、中央省略) で短くし、
+            # 全文は直下の caption (折り返す) に出す。値は変えない
             if len(_restore_dirs) > 1:
                 _restore_dir = st.selectbox(t("ディレクトリ"), _restore_dirs,
+                                            format_func=shorten_label,
                                             key="_session_restore_dir")
+                st.caption(md_plain(_restore_dir))
             _existing = _list_sessions(_restore_dir)
             if _existing:
                 _restore_slot = st.selectbox(
-                    t("ファイル名"), _existing, key="_session_restore_slot")
+                    t("ファイル名"), _existing, format_func=shorten_label,
+                    key="_session_restore_slot")
+                st.caption(t("選択中: {name}", name=md_plain(_restore_slot)))
                 if st.button(t("復元"), key="_session_restore_btn"):
                     try:
                         n = _load_session_from_disk(_restore_dir, _restore_slot)
@@ -634,9 +642,12 @@ with st.sidebar:
                 if _ow_pending["dir"] in _session_dirs:
                     st.session_state["_session_save_dir"] = _ow_pending["dir"]
                 st.session_state["_session_overwrite_slot"] = _ow_pending["name"]
+            # 表示の短縮と全文 caption は「作業の再開」の復元側と同じ流儀
             _session_dir = st.selectbox(
                 t("保存先ディレクトリ"), _session_dirs, key="_session_save_dir",
+                format_func=shorten_label,
                 help=t("`~/.climcanvas/config.toml` の `session_dirs` に追加候補を書ける"))
+            st.caption(md_plain(_session_dir))
             # 既存スロットへの上書き (スロット選択 + 上書きボタン)
             _existing_save = _list_sessions(_session_dir)
             # 選択値が一覧に無ければ既定へ戻す (dir 切替・外部削除への防御)
@@ -645,9 +656,12 @@ with st.sidebar:
             if _existing_save:
                 _c_ow_slot, _c_ow_btn = st.columns(
                     [3, 1], vertical_alignment="bottom")
+                # 3/4 幅の列に入るので短縮幅も狭める (全幅は既定 24)
                 _ow_slot = _c_ow_slot.selectbox(
                     t("上書きするファイル名"), _existing_save,
+                    format_func=lambda v: shorten_label(v, 18),
                     key="_session_overwrite_slot")
+                st.caption(t("選択中: {name}", name=md_plain(_ow_slot)))
                 if _c_ow_btn.button(t("上書き"), key="_session_overwrite_btn",
                                     help=t("選択したファイルに現在のセッションを"
                                            "上書き保存する")):
@@ -692,8 +706,8 @@ with st.sidebar:
                 data=_json_mod.dumps(session_state_json, ensure_ascii=False, indent=2),
                 file_name="climcanvas_session.json", mime="application/json",
                 key="session_dl",
-                help=t("保存先は手元ブラウザのダウンロード設定に従う (既定では確認なしに"
-                       "ダウンロードフォルダへ保存)。ファイル名は climcanvas_session.json 固定"))
+                help=t("保存先は手元ブラウザのダウンロード設定に従う。ファイル名は自由 "
+                       "(保存時に付けるか、保存後に変えてよい)"))
     with st.expander(t("プリセット"), expanded=False):
         st.caption(t(
             "データに依存しない好みの設定値 "
@@ -757,6 +771,17 @@ _NONE_OPTION = "(none)"
 _OUT_BG_LABELS = {"white": "白 (既定)", "color": "色を指定",
                   "transparent": "透明"}
 _PATH_STYLE_LABELS = {"absolute": "絶対パス", "relative": "相対パス"}
+
+
+def _script_dataset_paths(path_style: str) -> dict:
+    """再現スクリプトに書く netCDF のパス (dataset id → パス)。静止図とアニメーションで共用。
+
+    path_style は「netCDFパスの形式」(absolute / relative)。相対パスはアプリを起動した
+    ディレクトリからの相対 (2026-09-29 まではアニメーションのスクリプトだけ常に絶対パスだった)。
+    """
+    return {item["id"]: (os.path.abspath(item["path"]) if path_style == "absolute"
+                         else os.path.relpath(item["path"]))
+            for item in st.session_state["datasets"]}
 
 # render.RenderError の msg_id → 日本語原文 (i18n 第4段階)。コア層の str() は
 # 英語で、アプリではここから現在の UI 言語に翻訳して表示する。
@@ -856,16 +881,20 @@ def _error_text(exc) -> str:
     return str(exc)
 
 
-def _copy_panel_state(src_pid: int, dst_pid: int) -> None:
-    """パネル src の widget 状態をすべて新パネル dst にコピーする (複製用)。
+def _copy_panel_state(src_pid: int, dst_pid: int,
+                      skip_prefixes: tuple[str, ...] = ()) -> None:
+    """パネル src の widget 状態をすべて dst にコピーする (複製と共通編集のモード変更)。
 
     パネルスコープの key は mode_key (例 "map0") を `_` 区切りトークンとして
     含むため、トークン単位で置換した新キーへ値を写す。ボタン等 (セッション除外キー) は
-    programmatic 設定不可なのでスキップ。dst は widget 未描画の新パネルであること。
+    programmatic 設定不可なのでスキップ。dst は widget 未描画のパネルであること。
+    skip_prefixes で始まる key は写さない (dst 自身の値を残す。共通編集の個別設定用)。
     """
     token_map = {f"{m}{src_pid}": f"{m}{dst_pid}" for m in _MODE_IDS}
     for key in list(st.session_state.keys()):
         if _is_session_excluded(key):
+            continue
+        if skip_prefixes and key.startswith(skip_prefixes):
             continue
         parts = key.split("_")
         if not any(p in token_map for p in parts):
@@ -884,9 +913,41 @@ def _copy_panel_state(src_pid: int, dst_pid: int) -> None:
 # 個別設定として同期しない panel 設定のトップレベルキー (仕様22.4 の個別設定例)
 _COMMON_SKIP_CFG_KEYS = {"panel_id", "title", "title_fontsize", "texts",
                          "markers", "label"}
-# 個別設定として同期しない widget key のプレフィックス (上と対応)
+# 個別設定として同期しない widget key のプレフィックス (上と対応)。
+# indivcfg_{mode_key} は widget ではなく、パネルのモードごとの個別設定の控え
+# (_remember_individual_cfg。共通編集でモードを変えたときに各パネル自身の値を使う)
 _COMMON_SKIP_WIDGET_PREFIXES = ("title_", "txt", "plabel_", "texts_",
-                                "mk", "markers_")
+                                "mk", "markers_", "indivcfg_")
+# モードごとに控える個別設定 (panel_id は UI が設定しないので除く)
+_INDIVIDUAL_CFG_KEYS = ("title", "title_fontsize", "texts", "markers", "label")
+
+
+def _remember_individual_cfg(pid: int, cfg: dict | None = None) -> None:
+    """パネル pid の今のモードの個別設定 (タイトル・文字列・記号・ラベル) を控える。
+
+    cfg を省くと、キャッシュ済みの panel_cfg_{pid} (= 今のモードの設定) から取る。
+    """
+    mode = st.session_state.get(f"plot_mode_{pid}")
+    if cfg is None:
+        cfg = st.session_state.get(f"panel_cfg_{pid}")
+    if mode in _MODE_IDS and cfg:
+        st.session_state[f"indivcfg_{mode}{pid}"] = {
+            k: copy.deepcopy(cfg.get(k)) for k in _INDIVIDUAL_CFG_KEYS}
+
+
+def _individual_cfg(pid: int, mode: str) -> dict:
+    """パネル pid のモード mode での個別設定。控えが無ければ UI の初期値と同じ既定
+    (_texts_and_labels_ui を何も操作せずに描いたときの値)。
+
+    限界: この仕組みより前のセッションを復元した直後など、そのモードの widget 状態は
+    あるのに控えが無いときも既定になる (そのパネルを選んで表示すれば widget から
+    作り直される)。
+    """
+    saved = st.session_state.get(f"indivcfg_{mode}{pid}")
+    if saved:
+        return copy.deepcopy(saved)
+    return {"title": None, "title_fontsize": 12, "texts": [], "markers": [],
+            "label": mc_config.default_panel_label()}
 # layers_* (構成リスト + next counter) は汎用ミラーではなく
 # _sync_common_layers が同モードのパネルに限って同期する
 _COMMON_SKIP_WIDGET_EXACT_PREFIXES = ("layers_",)
@@ -1014,7 +1075,10 @@ def _propagate_common_edits(master_pid: int, new_cfg: dict) -> None:
       一致するときのみ適用
     - レイヤーの追加・削除・種類変更は _sync_common_layers が
       同じ描画モードのパネルへ反映 (2026-07-09 追加)
-    - 描画モードの変更は差分ではなく全設定コピー (_copy_panel_state)
+    - 描画モードの変更は差分ではなく全設定コピー (_copy_panel_state)。ただし
+      個別設定 (タイトル・文字列・記号・パネルラベル) は写さず、各パネル自身の
+      新しいモードでの設定 (控え indivcfg_、無ければ既定) を使う (2026-09-29 修正:
+      以前は全モードの個別設定と panel_cfg が代表パネルのもので上書きされていた)
     - タイトル・任意文字列・パネルラベルは個別設定として同期しない
     """
     other_pids = [p["id"] for p in st.session_state["panels"]
@@ -1033,10 +1097,16 @@ def _propagate_common_edits(master_pid: int, new_cfg: dict) -> None:
         return
 
     if f"plot_mode_{master_pid}" in changed:
-        # モード変更: 差分同期では追いきれないので全設定コピー
+        # モード変更: 差分同期では追いきれないので全設定コピー。個別設定は写さず、
+        # 各パネルの今のモードの個別設定を控えてから、新しいモードでの自分の値を使う
+        new_mode = st.session_state.get(f"plot_mode_{master_pid}")
         for pid in other_pids:
-            _copy_panel_state(master_pid, pid)
-            st.session_state[f"panel_cfg_{pid}"] = copy.deepcopy(new_cfg)
+            _remember_individual_cfg(pid)
+            _copy_panel_state(master_pid, pid,
+                              skip_prefixes=_COMMON_SKIP_WIDGET_PREFIXES)
+            cfg = copy.deepcopy(new_cfg)
+            cfg.update(_individual_cfg(pid, new_mode))
+            st.session_state[f"panel_cfg_{pid}"] = cfg
         return
 
     prev_cfg = st.session_state.get(f"panel_cfg_{master_pid}")
@@ -2622,6 +2692,8 @@ if st.session_state.get("panel_edit_all"):
 else:
     st.session_state.pop("_common_ws_snapshot", None)
 st.session_state[f"panel_cfg_{edit_pid}"] = panel_edited
+# 今のモードの個別設定を控える (共通編集でモードを行き来したときに各パネル自身の値を使う)
+_remember_individual_cfg(edit_pid, panel_edited)
 
 
 
@@ -2795,8 +2867,10 @@ if anim_req and anim_req[0] == "script":
     _, anim_time_values, anim_fps, anim_fmt, anim_centers, anim_dpi, anim_hold = anim_req
     try:
         out_name = f"animation.{anim_fmt}"
-        anim_paths = {item["id"]: os.path.abspath(item["path"])
-                       for item in st.session_state["datasets"]}
+        # 「netCDFパスの形式」は図の下の「再現スクリプト」にあり、この時点ではまだ描画前
+        # なので session_state から読む (既定 = 絶対パス)
+        anim_paths = _script_dataset_paths(
+            st.session_state.get("script_path_style", "absolute"))
         anim_script = mc_scriptgen.generate_animation_script(
             figure_config, datasets, anim_paths,
             time_values=anim_time_values, centers=anim_centers,
@@ -2879,11 +2953,7 @@ with col_script:
                           key="script_path_style")
     include_save = st.checkbox(t("savefig を含める"), value=True, key="script_include_save")
     include_show = st.checkbox(t("plt.show() を含める"), value=True, key="script_include_show")
-    ds_paths_for_script = {
-        item["id"]: (item["path"] if path_style == "absolute"
-                     else os.path.relpath(item["path"]))
-        for item in st.session_state["datasets"]
-    }
+    ds_paths_for_script = _script_dataset_paths(path_style)
     script = mc_scriptgen.generate_script(
         figure_config, datasets, ds_paths_for_script,
         figure_output=out_name, figure_dpi=int(dpi),

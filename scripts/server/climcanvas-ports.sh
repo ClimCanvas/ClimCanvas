@@ -113,20 +113,21 @@ apply() {
     echo "applied the owner-match rules from $TABLE ($NFT_FILE)"
 }
 
-hint() {  # print how the user connects
+hint() {  # print how the user connects (in the order the user does it)
     local user="$1" port; port="$(lookup_port "$user")"
     cat <<EOF
 
---- How $user runs ClimCanvas ---------------------------------------
-On the server (as $user):
-  climcanvas-ports is done; start ClimCanvas under your own account:
-  streamlit run app.py --server.headless=true --server.address=127.0.0.1 --server.port=$port
-  (scripts/server/start-climcanvas.sh fills in the port automatically)
-
-From your machine:
-  ssh -L $port:localhost:$port $user@<server>
-  then open http://localhost:$port in a browser
---------------------------------------------------------------------
+--- How $user connects to ClimCanvas (assigned port on the server: $port) ---
+1. On your own machine, log in to the server with an SSH tunnel:
+     ssh -L 8501:localhost:$port $user@<server>
+   8501 is a port on your own machine (any free port will do; use another
+   number such as 8502 if 8501 is already in use there). $port is your
+   port on the server and is always the same.
+2. In that session on the server, start ClimCanvas with the launcher
+   (it looks up port $port in the port table by itself):
+     <ClimCanvas directory>/scripts/server/start-climcanvas.sh
+3. In a browser on your own machine, open http://localhost:8501
+--------------------------------------------------------------------------
 EOF
 }
 

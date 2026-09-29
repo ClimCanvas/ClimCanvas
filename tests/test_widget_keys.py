@@ -172,3 +172,74 @@ def test_button_keys_are_excluded_from_session_save():
     if violations:
         raise AssertionError(
             "セッション保存から除外されていないボタン系 widget があります:\n" + "\n".join(violations))
+
+
+# --- プリセットのキー一覧 ⇄ 実在する widget key ---
+
+def _key_text(node: ast.AST) -> tuple[str, bool] | None:
+    """key 引数の式から (固定部分, 完全リテラルか) を返す。f-string は先頭の固定部分。"""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value, True
+    if isinstance(node, ast.JoinedStr):
+        head = ""
+        for part in node.values:
+            if isinstance(part, ast.Constant):
+                head += part.value
+            else:
+                return head, False
+        return head, True
+    return None
+
+
+def _collect_widget_key_texts() -> set[tuple[str, bool]]:
+    """UI 層で widget の key になる文字列 (固定部分, 完全リテラルか) の集合。
+
+    key= キーワード引数に加え、UI 層で定義した関数の引数名が key / key_prefix の
+    位置引数 (fontsize_input(label, key)・strftime_format_ui(label, key_prefix) 等、
+    関数の中で key を組み立てる部品) も拾う。state_io.py (一覧そのもの) は除く。
+    """
+    files = [f for f in _ui_source_files() if f.name != "state_io.py"]
+    trees = [ast.parse(f.read_text(encoding="utf-8")) for f in files]
+    params: dict[str, list[str]] = {}
+    for tree in trees:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                params[node.name] = [a.arg for a in node.args.args]
+    texts: set[tuple[str, bool]] = set()
+    for tree in trees:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for kw in node.keywords:
+                if kw.arg in ("key", "key_prefix"):
+                    kt = _key_text(kw.value)
+                    if kt:
+                        texts.add(kt)
+            name = (node.func.id if isinstance(node.func, ast.Name)
+                    else node.func.attr if isinstance(node.func, ast.Attribute) else None)
+            for pname, arg in zip(params.get(name, []), node.args):
+                if pname in ("key", "key_prefix"):
+                    kt = _key_text(arg)
+                    if kt:
+                        texts.add(kt)
+    return texts
+
+
+def test_preset_keys_exist_as_widget_keys():
+    """プリセットに保存するキー・プレフィックスが、実在する widget key を指していること。
+
+    widget の key を変えたのに state_io の一覧を直し忘れると、その設定は黙って
+    プリセットに入らなくなる (実例: 画像出力の背景を 3 択のラジオ out_bg_mode に
+    変えたとき一覧が旧 out_transparent のままで、背景がプリセットに入らなかった。
+    2026-09-29 修正)。完全一致キーは完全リテラルの key と、プレフィックスは
+    key の固定部分の先頭と照合する。
+    """
+    from climcanvas.ui import state_io
+    texts = _collect_widget_key_texts()
+    exact = {s for s, full in texts if full}
+    missing = sorted(k for k in state_io._PRESET_INCLUDE_KEYS | state_io._PRESET_ONLY_KEYS
+                     if k not in exact)
+    missing += [p + "*" for p in state_io._PRESET_INCLUDE_PREFIXES
+                if not any(s.startswith(p) for s, _ in texts)]
+    assert not missing, ("プリセットの一覧に、どの widget key にも当たらない項目があります "
+                         f"(state_io.py を widget の今の key に合わせる): {missing}")

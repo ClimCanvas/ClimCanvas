@@ -8,6 +8,30 @@ versions and are not listed.
 
 ## Unreleased
 
+## 1.01 — 2026-09-29
+
+### Added
+
+- Hatch layers (maps and sections): "Hatch line color" sets the color of the hatch lines (black by default).
+- The new-issue page on GitHub now links to the user manual and FAQ (in Japanese) first, so common questions can be answered before opening an issue.
+- The box "Processing applied to this figure" now also notes when error bars are drawn without the layer's value transform (and when an error variable's units attribute differs from the plotted variable's), and when quantities whose units attribute or value transform differ share the same value axis of a 1-D plot (left axis, secondary axis and horizontal-bar axis are checked separately). Units are compared as text, so different spellings of the same unit are also reported as "may differ".
+- Sample custom colormaps in `data/sample/cmaps/` (one file per format: `.rgb`, `.txt`, `.dat`). Copy them to `~/.climcanvas/cmaps/` to try the "Custom" colormap group.
+
+### Fixed
+
+- The startup preset now saves the image background (white / color / transparent) and the background color. It still referred to the checkbox that the three-way background choice had replaced, so the background was silently left out of presets.
+- Common edit mode ("🔗 All panels shared"): changing the plot mode of the representative panel overwrote the titles, texts, markers and panel labels of the other panels (in every plot mode) with those of the representative panel. Each panel now keeps its own per-mode titles, texts, markers and panel labels, as when a single panel changes its mode.
+- (affects figure values) Error bars no longer receive the value transform of the layer. Bar charts applied scale and offset to error amounts taken from a variable, and scatter and bubble charts applied the scale; error amounts (variable or constant) are now drawn as given, in the units shown in the figure. See `KNOWN_ISSUES.md` KI-1.
+- Reversing a custom colormap ("reverse colormap" with a colormap from `~/.climcanvas/cmaps/`) failed with "'name_r' is not a valid value for cmap", both in the app and in the generated script. The reversed colormap is now registered alongside the original.
+
+### Changed
+
+- Server scripts: the connection instructions printed by `climcanvas-ports assign` now follow the order in which the user connects — SSH tunnel from their own machine first (`ssh -L 8501:localhost:<assigned port> …`; 8501 is any free port on their machine), then the launcher on the server, then the browser at `http://localhost:8501`. The launcher prints the same tunnel command.
+- The reproduction script for animations now follows "netCDF path style" (absolute / relative) like the script for still figures; it always wrote absolute paths before.
+- The README states which versions have a Zenodo version DOI (milestone versions only); other versions are cited with the concept DOI and the version number.
+- The help text of the session download button no longer says the file name is fixed; any name can be used when saving or restoring.
+- The session restore and overwrite pickers in the sidebar now abbreviate long directory paths and file names in the middle (home directory as `~`) and show the full selected name underneath, so long names stay readable in the narrow sidebar.
+
 ## 1.00.1 — 2026-09-28
 
 ### Added
@@ -33,7 +57,7 @@ internal version (0.98).
 - "About" in the app menu (top right) shows the version and links to the feedback form (in the UI language, with the version filled in), GitHub Issues and the license. The links only open a web page; the app sends nothing. Requires Streamlit 1.46 or later; with older versions the menu item is not shown.
 - A box under the figure, "Processing applied to this figure", lists per panel the value transforms (scale a and offset b for each variable, with the variable's units attribute), the range averages (dimension, range, arithmetic or cos(lat)-weighted, number of grid points, and the number of missing values excluded from the mean), maskout thresholds, and a reminder that vector components on curvilinear grids are not rotated. It appears only when such processing is applied.
 - `config.example.toml`: a commented template of the optional user configuration (`allowed_dirs`, `session_dirs`, `mode`) to copy to `~/.climcanvas/config.toml`.
-- Online manual: Japanese sources under `manual/ja/` (seven chapters and an FAQ) and `scripts/build_manual.py`, which renders them into the project website with python-markdown.
+- Online manual on the project website (in Japanese): seven chapters and an FAQ.
 - Curvilinear grids: data whose longitude and latitude are two-dimensional
   arrays (ocean models, WRF, regional models on Lambert conformal grids such
   as ClimCORE) can now be drawn on horizontal maps with every map layer type

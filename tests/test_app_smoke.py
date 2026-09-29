@@ -320,6 +320,24 @@ def test_panel_state_survives_duplicate_and_switch(sample_path):
     assert at.session_state["plot_mode_0"] == "map"
     assert at.session_state["title_map0"] == "KEEP-ME"
 
+def test_output_background_settings_are_preset_keys(sample_path):
+    """画像出力の背景 (白 / 色を指定 / 透明) と背景色が起動時プリセットの対象であること。
+
+    回帰テスト (2026-09-29): 背景を 3 択のラジオ out_bg_mode にしたとき、プリセットの
+    一覧が旧 out_transparent のままで、背景の設定がプリセットに入らなかった。
+    実際に描画された widget の key (色選択の内部 key を含む) で確かめる。
+    """
+    from climcanvas.ui.state_io import _is_preset_key
+    at = _load_app(sample_path)
+    at.radio(key="out_bg_mode").set_value("color")
+    at.run()
+    assert not at.exception
+    bg_keys = [k for k in at.session_state.filtered_state if k.startswith("out_bg_")]
+    assert "out_bg_mode" in bg_keys
+    assert any(k.startswith("out_bg_color") for k in bg_keys), bg_keys
+    assert [k for k in bg_keys if not _is_preset_key(k)] == []
+
+
 def test_global_settings_survive_panel_switch(sample_path):
     """パネル切替で「図全体の書式」「出力」の widget 状態が破棄されないこと。
 
@@ -387,6 +405,56 @@ def test_common_edit_mode_propagates_changes(sample_path):
     at.number_input(key="nlev_map0_0").set_value(7)
     at.run()
     assert at.session_state["nlev_map1_0"] == 11
+
+
+def test_common_edit_mode_change_keeps_individual_settings(sample_path):
+    """全パネル共通モードで描画モードを変えても、タイトル・パネルラベル等は
+    代表パネルのもので上書きされない (モードごとに各パネル自身の設定)。
+
+    回帰テスト (2026-09-29): モード変更の経路だけ全設定コピー (_copy_panel_state) で、
+    他パネルの全モードのタイトル・ラベルと panel_cfg が代表パネルのものになっていた。
+    """
+    at = _load_app(sample_path)
+    at.number_input(key="grid_ncols").set_value(2)
+    at.run()
+    _button(at, "dup_panel_0").set_value(True)
+    at.run()
+    # パネル2 (pid=1、複製直後に選択中) にタイトルとラベル (b)
+    at.text_input(key="title_map1").set_value("P2")
+    at.run()
+    at.checkbox(key="plabel_show_map1").set_value(True)
+    at.run()
+    at.text_input(key="plabel_text_map1").set_value("(b)")
+    at.run()
+    # パネル1 (pid=0) を代表に共通モード
+    _button(at, "_panel_sel_0").set_value(True)
+    at.run()
+    at.text_input(key="title_map0").set_value("P1")
+    at.run()
+    _button(at, "_panel_sel_all").set_value(True)
+    at.run()
+    assert at.session_state["panel_edit_all"] is True
+
+    # 代表のモードを鉛直断面に → パネル2 もモードは変わるが個別設定は自分のもの
+    at.selectbox(key="plot_mode_0").set_value("vsec")
+    at.run()
+    assert not at.exception
+    assert at.session_state["plot_mode_1"] == "vsec"
+    assert at.session_state["panel_cfg_1"]["plot_type"] == "section_2d"
+    assert at.session_state["title_map1"] == "P2"          # 地図のときの設定は残る
+    assert at.session_state["plabel_text_map1"] == "(b)"
+    assert at.session_state["panel_cfg_1"]["title"] is None   # 断面では初めて = 既定
+    assert at.session_state["panel_cfg_1"]["label"]["show"] is False
+
+    # 地図に戻すと、パネル2 のタイトルとラベルが戻る
+    at.selectbox(key="plot_mode_0").set_value("map")
+    at.run()
+    assert not at.exception
+    assert at.session_state["plot_mode_1"] == "map"
+    assert at.session_state["panel_cfg_1"]["title"] == "P2"
+    assert at.session_state["panel_cfg_1"]["label"]["show"] is True
+    assert at.session_state["panel_cfg_1"]["label"]["text"] == "(b)"
+    assert at.session_state["panel_cfg_0"]["title"] == "P1"
 
 
 def test_allowed_dirs_blocks_injected_path(sample_path, tmp_path, monkeypatch):

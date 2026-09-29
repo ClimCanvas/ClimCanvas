@@ -1267,3 +1267,26 @@ def test_land_above_data_checkbox_maps_to_config(sample_path):
     at.run()
     assert not at.exception
     assert at.session_state["panel_cfg_0"]["map"]["land"]["above_data"] is True
+
+
+def test_animation_script_follows_path_style(sample_path):
+    """アニメーションの再現スクリプトも「netCDFパスの形式」(絶対 / 相対) に従う。
+
+    回帰テスト (2026-09-29): 静止図のスクリプトは設定に従うのに、アニメーションの
+    スクリプトだけ常に絶対パスで書いていた (app._script_dataset_paths で共用に)。
+    """
+    import os
+    at = _load_app(sample_path)
+    rel = os.path.relpath(sample_path)
+    absp = os.path.abspath(sample_path)
+    assert rel != absp
+    for style, expected, unexpected in (("relative", rel, absp), ("absolute", absp, None)):
+        at.radio(key="script_path_style").set_value(style)
+        at.run()
+        _button(at, "anim_script_map0").set_value(True)
+        at.run()
+        assert not at.exception
+        script = at.session_state["_anim_script"]
+        assert repr(expected) in script, style
+        if unexpected:
+            assert repr(unexpected) not in script, style

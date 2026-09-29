@@ -1452,6 +1452,8 @@ def _line_1d_bar_errorbar_variable_config():
     bar["style"].update({
         "color": "tab:blue", "alpha": 0.8,
         "label": "U",
+        # 値の変換つき: 棒には掛かり、エラー量には掛からないことを両経路で揃える
+        "value_scale": 2.0, "value_offset": 1.0,
     })
     bar["style"]["errorbar"] = {
         "source": "variable", "variable": "v", "constant": 0.0,
@@ -2862,7 +2864,7 @@ def _map_scatter_grid_config():
                            "central_latitude": 0.0}
     panel["title"] = "map scatter (grid)"
     ms = mc_config.default_map_scatter_layer("ds0", "precip")
-    ms["style"].update({"cmap": "YlGnBu", "size": 14.0, "marker": "s",
+    ms["style"].update({"use_cmap": True, "cmap": "YlGnBu", "size": 14.0, "marker": "s",
                         "levels": [0.0, 2.0, 5.0, 10.0, 20.0]})
     ms["style"]["colorbar"].update({"label": "precip", "location": "right"})
     panel["layers"] = [ms]
@@ -2892,7 +2894,7 @@ def test_map_scatter_station_matches_script(tmp_path):
                            "central_latitude": 0.0}
     panel["title"] = "map scatter (station)"
     ms = mc_config.default_map_scatter_layer("ds0", "temp")
-    ms["style"].update({"cmap": "coolwarm", "size": 45.0, "edge_linewidth": 0.6})
+    ms["style"].update({"use_cmap": True, "cmap": "coolwarm", "size": 45.0, "edge_linewidth": 0.6})
     ms["style"]["colorbar"]["label"] = "temp"
     panel["layers"] = [ms]
     cfg = mc_config.default_figure_config()
@@ -3044,6 +3046,7 @@ def _maskout_map_config():
                           "maskout": {"below": -40.0, "above": -20.0}})
     hatch = mc_config.default_hatch_layer("ds0", "t")
     hatch["style"].update({"levels": [-273.15, 100.0], "pattern": "/",
+                           "color": "#cc0000",   # ハッチ線の色 (既定以外を 1 つ)
                            "value_offset": -273.15,
                            "maskout": {"below": None, "above": -30.0}})
     contour = mc_config.default_contour_layer("ds0", "z")

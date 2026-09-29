@@ -56,13 +56,15 @@ _PRESET_INCLUDE_KEYS = {
     # 出力
     "png_dpi", "png_name", "script_path_style",
     "script_include_save", "script_include_show",
-    "out_format", "out_transparent", "out_tight",
+    "out_format", "out_bg_mode", "out_tight",   # 背景色の色選択は下の prefix "out_bg_color"
     # フォント (図全体)
     "font_use", "font_mode", "font_common", "font_all",
 }
 
 # レイヤー・パネルの好み (キーが `_{lid}` や `_{mode_key}` を含むので prefix で一括判定)
 _PRESET_INCLUDE_PREFIXES = (
+    # 出力: 背景「色を指定」の色 (color_selector の out_bg_color_cat / _sel_* / _picker)
+    "out_bg_color",
     # 地図設定 (coast_show_{mode_key} など)
     "coast_", "borders_show", "land_", "ocean_", "frame_",
     # 緯度経度線
@@ -84,18 +86,21 @@ _PRESET_INCLUDE_PREFIXES = (
     # 等値線
     "cont_cmode_", "cont_rev_", "cont_color_", "cont_lw_", "cont_ls_",
     "cont_lab_", "cont_labfs_", "cont_fmt_",
-    # ベクトル (vec_keylab_ = ラベル文字列、vec_u_ / vec_v_ = 変数選択は含まない)
-    "vec_color_", "vec_cmode_", "vec_revcmap_", "vec_disc_", "vec_nlev_",
-    "vec_lvmode_", "vec_lvls_", "vcb",
+    # ベクトル (vec_keylab_ = ラベル文字列、vec_u_ / vec_v_ = 変数選択は含まない)。
+    # 色付けのカラーマップとカラーバーは共通部品 (cmap_section_ui / colorbar_ui、
+    # p = vec_{lid}) の key なので、上の cmap_ / rev_ / nlev_ / ext_ / cb* に含まれる
+    # (旧 key の vec_revcmap_ 等は 2026-09-29 に一覧から削除。tests/test_widget_keys.py
+    # の test_preset_keys_exist_as_widget_keys が実在しない項目を検出する)
+    "vec_color_", "vec_cmode_",
     "vec_mask",
     "vec_skip_x_", "vec_skip_y_",
-    "vec_autoscale_", "vec_scale_", "vec_refpct_", "vec_autowidth_",
+    "vec_autoscale_", "vec_refpct_", "vec_autowidth_",
     "vec_width_",
     "vec_autohl_", "vec_headlen_", "vec_edge_", "vec_ecol_", "vec_elw_",
     "vec_key_", "vec_keylen_", "vec_keylpos_", "vec_keyfs_",
     "vec_keyx_", "vec_keyy_",
     # ハッチ (パターン・密度・太さに加え、閾値も含める。閾値は変数依存だがユーザ希望)
-    "hatch_pat_", "hatch_den_", "hatch_lw_", "hatch_lo_", "hatch_hi_",
+    "hatch_pat_", "hatch_den_", "hatch_lw_", "hatch_col_", "hatch_lo_", "hatch_hi_",
     # 軸文字サイズ (per mode)
     "labfs_", "tickfs_", "title_fs_",
 )

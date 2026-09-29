@@ -19,6 +19,7 @@ docs/scientific_safeguard_plan.md A-1 の第 1 段階。通知は描画結果で
 
 import numpy as np
 import pytest
+import xarray as xr
 
 from climcanvas.core import config as mc_config
 from climcanvas.core import dataset as mc_dataset
@@ -122,7 +123,7 @@ def test_fill_between_and_stackplot_list_all_variables(datasets):
     sp = mc_config.default_stackplot_layer("ds0", ["t", "u", "v"])
     sp["style"]["value_scale"] = 3.0
     notes = mc_notes.collect_notes(_figure(_line_panel("lon", fb, sp)), datasets)
-    assert [(n["kind"], n["variables"]) for n in notes] == [
+    assert [(n["kind"], n["variables"]) for n in _by_type(notes, "value_transform")] == [
         ("fill_between", ["t", "z"]), ("stackplot", ["t", "u", "v"])]
 
 
@@ -212,12 +213,14 @@ def test_fill_between_upper_uses_averages_upper(datasets):
     fb["averages_upper"] = {"lat": {"op": "weighted_mean", "range": [0.0, 20.0]}}
     notes = mc_notes.collect_notes(_figure(_line_panel("lon", fb)), datasets)
     n = int(((lat >= 0.0) & (lat <= 20.0)).sum())
-    assert [(tuple(x["variables"]), x["op"], x["n_points"]) for x in notes] == [
+    assert [(tuple(x["variables"]), x["op"], x["n_points"])
+            for x in _by_type(notes, "average")] == [
         (("t",), "mean", n), (("z",), "weighted_mean", n)]
     # 同じ設定なら 1 項目にまとまる
     fb["averages_upper"] = fb["averages"]
     notes = mc_notes.collect_notes(_figure(_line_panel("lon", fb)), datasets)
-    assert [(tuple(x["variables"]), x["op"]) for x in notes] == [(("t", "z"), "mean")]
+    assert [(tuple(x["variables"]), x["op"])
+            for x in _by_type(notes, "average")] == [(("t", "z"), "mean")]
 
 
 # --- 生成スクリプトとの整合 ---
@@ -389,3 +392,109 @@ def test_average_missing_section_path(datasets):
         (["lat"], block.size, int(np.isnan(block).sum()))]
     md = format_notes(notes)
     assert f"平均範囲内の欠損 {int(np.isnan(block).sum())} / {block.size} 要素 (平均から除外)" in md
+
+
+# --- エラー量と、同じ軸に重なる量の単位 (2026-09-29) ---
+
+def test_error_untransformed_bar_variable_and_constant(datasets):
+    """エラー量には値の変換を掛けないので、本体に変換があれば知らせる (変数・定数とも)。"""
+    bar_v = mc_config.default_bar_layer("ds0", "u")
+    bar_v["style"]["value_scale"] = 2.0
+    bar_v["style"]["errorbar"].update({"source": "variable", "variable": "v"})
+    bar_c = mc_config.default_bar_layer("ds0", "t")
+    bar_c["style"]["value_offset"] = -273.15
+    bar_c["style"]["errorbar"].update({"source": "constant", "constant": -1.5})
+    bar_none = mc_config.default_bar_layer("ds0", "u")   # 変換なし → 通知なし
+    bar_none["style"]["errorbar"].update({"source": "variable", "variable": "v"})
+    notes = mc_notes.collect_notes(
+        _figure(_line_panel("lon", bar_v), _line_panel("lon", bar_c),
+                _line_panel("lon", bar_none)), datasets)
+    errs = _by_type(notes, "error_untransformed")
+    assert [(n["panel_index"], n["variables"], n["err_variable"], n["err_constant"],
+             n["err_units"]) for n in errs] == [
+        (0, ["u"], "v", None, "m s-1"), (1, ["t"], None, 1.5, None)]
+    assert _by_type(notes, "error_units_mismatch") == []
+    md = format_notes(notes)
+    i = md.splitlines().index("- 棒グラフ `u` [m s-1]")
+    assert md.splitlines()[i + 2] == (
+        "    - エラー量 `v` [m s-1] には値の変換を掛けていない (誤差は図の単位で用意する)")
+    assert "エラー量 (定数 1.5) には値の変換を掛けていない" in md
+
+
+def test_error_units_mismatch_without_transform(datasets):
+    """変換が無いときは、誤差変数と本体の units 属性の文字列が違えば知らせる。"""
+    bar = mc_config.default_bar_layer("ds0", "t")            # K
+    bar["style"]["errorbar"].update({"source": "variable", "variable": "u"})  # m s-1
+    panel = mc_config.default_scatter_panel()
+    panel.update({"x_variable": "t", "y_variable": "u"})
+    sc = mc_config.default_scatter_layer("ds0")
+    sc["style"]["x_value_scale"] = 0.5                       # x: 変換あり
+    sc["style"]["errorbar"] = {"x_variable": "t", "y_variable": "v",  # y: 同じ単位
+                               "color": "#000000", "linewidth": 1.0, "capsize": 3.0}
+    panel["layers"] = [sc]
+    notes = mc_notes.collect_notes(_figure(_line_panel("lon", bar), panel), datasets)
+    mis = _by_type(notes, "error_units_mismatch")
+    assert [(n["variables"], n["err_variable"], n["err_units"], n["main_units"])
+            for n in mis] == [(["t"], "u", "m s-1", "K")]
+    un = _by_type(notes, "error_untransformed")
+    assert [(n["panel_index"], n["axis"], n["err_variable"]) for n in un] == [(1, "x", "t")]
+    assert "エラー量 `u` [m s-1] の単位が本体の [K] と違う可能性がある" in format_notes(notes)
+
+
+def test_line_axis_units_mixed_per_value_axis(datasets):
+    """1 次元プロットの同じ値の軸に units か値の変換が違う量が重なれば、軸ごとに 1 行。"""
+    lt = mc_config.default_line_layer("ds0", "t")            # K
+    lu = mc_config.default_line_layer("ds0", "u")            # m s-1
+    notes = mc_notes.collect_notes(_figure(_line_panel("lon", lt, lu)), datasets)
+    mixed = _by_type(notes, "axis_units_mixed")
+    assert [(n["value_axis"], [(e["variable"], e["units"]) for e in n["entries"]])
+            for n in mixed] == [("y", [("t", "K"), ("u", "m s-1")])]
+    assert ("- 縦軸: 単位か値の変換が違う可能性のある量が重なっている — "
+            "`t` [K], `u` [m s-1]") in format_notes(notes).splitlines()
+    # 第 2 軸に分ければ、どちらの軸も 1 種類なので通知なし
+    lu2 = mc_config.default_line_layer("ds0", "u")
+    lu2["style"]["secondary_y"] = True
+    assert _by_type(mc_notes.collect_notes(
+        _figure(_line_panel("lon", lt, lu2)), datasets), "axis_units_mixed") == []
+    # 同じ変数・同じ単位でも値の変換が違えば通知 (K と ℃ の重ね描き)
+    tc = mc_config.default_line_layer("ds0", "t")
+    tc["style"]["value_offset"] = -273.15
+    mixed = _by_type(mc_notes.collect_notes(
+        _figure(_line_panel("lon", lt, tc)), datasets), "axis_units_mixed")
+    assert len(mixed) == 1
+    assert "`t` [K] (a = 1, b = −273.15)" in format_notes(mixed)
+    # 同じ量の重ね描き (変換も同じ) は通知なし
+    assert _by_type(mc_notes.collect_notes(
+        _figure(_line_panel("lon", lt, mc_config.default_line_layer("ds0", "t"))),
+        datasets), "axis_units_mixed") == []
+
+
+def test_line_axis_units_mixed_stackplot_and_unknown_units():
+    """積み上げ図の変数どうしも比べる。units の分からない量は units の比較から外す。"""
+    lon = np.arange(0.0, 40.0, 10.0)
+    ds = xr.Dataset({"a": ("lon", np.ones(4), {"units": "mm"}),
+                     "b": ("lon", np.ones(4), {"units": "mm "}),   # 空白の差は同じ扱い
+                     "c": ("lon", np.ones(4)),                     # units なし
+                     "d": ("lon", np.ones(4), {"units": "kg"})},
+                    coords={"lon": lon})
+    dss = {"ds0": ds}
+
+    def panel(*layers):
+        p = mc_config.default_line_panel()
+        p["x_dim"] = "lon"
+        p["selection"] = {}
+        p["layers"] = list(layers)
+        return p
+
+    same = mc_config.default_stackplot_layer("ds0", ["a", "b", "c"])
+    assert _by_type(mc_notes.collect_notes(_figure(panel(same)), dss),
+                    "axis_units_mixed") == []
+    mixed = mc_config.default_stackplot_layer("ds0", ["a", "d"])
+    notes = _by_type(mc_notes.collect_notes(_figure(panel(mixed)), dss), "axis_units_mixed")
+    assert [e["variable"] for e in notes[0]["entries"]] == ["a", "d"]
+    # 横棒は値が横軸なので、縦軸の線とは比べない
+    hbar = mc_config.default_bar_layer("ds0", "d")
+    hbar["style"]["orientation"] = "horizontal"
+    assert _by_type(mc_notes.collect_notes(
+        _figure(panel(mc_config.default_line_layer("ds0", "a"), hbar)), dss),
+        "axis_units_mixed") == []

@@ -24,7 +24,9 @@ port="$(grep -vE '^[[:space:]]*(#|$)' "$TABLE" | awk -v u="$me" '$1==u {print $2
 [ -n "$port" ] || { echo "no port is assigned to $me (ask the administrator to run: climcanvas-ports assign $me)" >&2; exit 1; }
 
 echo "Starting ClimCanvas on 127.0.0.1:$port (as $me)"
-echo "From your machine: ssh -L $port:localhost:$port $me@<server>  then open http://localhost:$port in a browser"
+echo "If you logged in without a tunnel, run this on your own machine (8501 = any free port there):"
+echo "  ssh -L 8501:localhost:$port $me@<server>"
+echo "Then open http://localhost:8501 in a browser on your own machine."
 
 if [ -n "${CLIMCANVAS_ALLOWED_DIRS:-}" ]; then
     export CC_ALLOWED_DIRS="$CLIMCANVAS_ALLOWED_DIRS"

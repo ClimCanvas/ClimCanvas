@@ -104,7 +104,7 @@ def default_legend() -> dict:
     """凡例の設定 (line_1d / dist_1d / scatter_2d 共通)。"""
     return {
         "show": True,
-        "loc": "best",       # x/y 指定時は「凡例のどこを座標に合わせるか」の基準点
+        "loc": "best",       # 凡例の位置。x/y 指定時は使わない (基準点は凡例の左下角に固定 = render.legend_kwargs)
         "fontsize": None,
         # 凡例の位置を axes 座標で直接指定 (bbox_to_anchor)。両方 None で
         # loc のみの従来動作。枠外 (例 x=1.02) にも置ける
@@ -1053,7 +1053,9 @@ def default_bundle_summary(stat: str = "mean") -> dict:
     """
     return {
         "stat": stat,
-        "q_low": 5.0,            # percentile: 使う分位 (%) / pct_range: 下側の分位
+        # percentile: 使う分位 (%) / pct_range: 下側の分位。既定は画面の初期値に合わせる
+        # (パーセンタイル 1 本 = 95、範囲の下側 = 5。2026-09-29 に percentile を 5 → 95)
+        "q_low": 95.0 if stat == "percentile" else 5.0,
         "q_high": 95.0,          # pct_range: 上側の分位 (他の stat では未使用)
         "k_std": 1.0,            # std_range: 標準偏差の倍率 k (平均 ± k σ)
         "draw": "lines",         # 2 本組の描き方: lines / band / band_lines
@@ -1249,6 +1251,7 @@ def default_hatch_layer(dataset_id: str, variable: str) -> dict:
             "pattern": "/",           # ハッチ文字 (matplotlib: / \ | - + x o O . *)
             "density": 3,             # パターン文字の繰り返し回数 (大きいほど線が密)
             "linewidth": 1.0,         # ハッチ線の太さ (rcParams['hatch.linewidth'])
+            "color": "#000000",       # ハッチ線の色 (rcParams['hatch.color'])
             "value_scale": 1.0,
             "value_offset": 0.0,
             # maskout: below 以下 / above 以上を描かない (default_fill_layer 参照)
@@ -1410,8 +1413,9 @@ def default_map_scatter_layer(dataset_id: str, variable: str) -> dict:
         "variable": variable,
         "selection": {},          # 余分な次元の固定 (default_fill_layer 参照)
         "style": {
-            # 値で色付けする (use_cmap=False なら color の単色)
-            "use_cmap": True,
+            # 値で色付けする (use_cmap=False なら color の単色)。既定は画面の初期値
+            # (「点の色付け」= 単色) に合わせる (2026-09-29。それまでは True で、画面と食い違っていた)
+            "use_cmap": False,
             "color": "#1f77b4",
             "cmap": "viridis",
             "reverse_cmap": False,

@@ -40,7 +40,7 @@ commit per release, so the tip of `main` is always the newest version (the
 necessarily the newest). To use a specific version, clone its tag:
 
 ```bash
-git clone --branch v1.02 https://github.com/ClimCanvas/ClimCanvas.git
+git clone --branch v1.01 https://github.com/ClimCanvas/ClimCanvas.git
 ```
 
 To update an existing clone, run `git pull` in it; your settings and sessions
@@ -124,8 +124,11 @@ cite this repository with the version you used; `CITATION.cff` holds the
 citation metadata (GitHub shows it under "Cite this repository"). Releases are
 archived on Zenodo: the concept DOI
 [10.5281/zenodo.22997360](https://doi.org/10.5281/zenodo.22997360) always
-resolves to the latest version, and each release also has its own version DOI
-(v1.00: [10.5281/zenodo.22997361](https://doi.org/10.5281/zenodo.22997361)).
+resolves to the latest archived version. A version DOI is minted only for
+milestone versions (v1.00 and the version used in the paper); the other
+versions have a git tag but no DOI of their own, so cite them with the concept
+DOI and the version number. Version DOIs so far: v1.00
+[10.5281/zenodo.22997361](https://doi.org/10.5281/zenodo.22997361).
 
 ## Contributing
 

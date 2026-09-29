@@ -94,6 +94,7 @@ from .render import (
     gridline_plan,
     gridline_label_filters,
     hatch_pattern,
+    hatch_rc_params,
     heatmap_base_kwargs,
     heatmap_data,
     heatmap_dim_labels,
@@ -614,24 +615,32 @@ def _custom_cmap_registration_lines(names: list[str]) -> list[str]:
     """カスタムカラーマップを matplotlib に登録するスクリプト行を返す。"""
     if not names:
         return []
-    lines = ["# Register custom colormaps (from ~/.climcanvas/cmaps/)"]
+    # render.load_custom_cmaps と同じく反転名 <name>_r も登録する (1 対 1)
+    lines = ["# Register custom colormaps (from ~/.climcanvas/cmaps/), "
+             "including the reversed '<name>_r'"]
     for name in names:
         rgb = custom_cmap_rgb(name) or []
         rgb_str = ", ".join(f"({r!r}, {g!r}, {b!r})" for r, g, b in rgb)
         lines.append(
-            f"mpl.colormaps.register("
-            f"mcolors.LinearSegmentedColormap.from_list({name!r}, [{rgb_str}]), "
-            f"name={name!r}, force=True)")
+            f"_custom_cmap = mcolors.LinearSegmentedColormap.from_list("
+            f"{name!r}, [{rgb_str}])")
+        lines.append(
+            f"mpl.colormaps.register(_custom_cmap, name={name!r}, force=True)")
+        lines.append(
+            f"mpl.colormaps.register(_custom_cmap.reversed(), "
+            f"name={name + '_r'!r}, force=True)")
     lines.append("")
     return lines
 
 
-def _wrap_hatch_lw(lines: list[str], linewidth: float) -> list[str]:
-    """ハッチの contourf 行を plt.rc_context で囲む (linewidth != 1.0 のときのみ)。"""
-    if linewidth == 1.0:
+def _wrap_hatch_rc(lines: list[str], style: dict) -> list[str]:
+    """ハッチの contourf 行を plt.rc_context で囲む (線の太さか色が既定と違うときのみ)。
+    設定の解決は render.hatch_rc_params と共用。"""
+    params = hatch_rc_params(style, only_changed=True)
+    if not params:
         return lines
     return [
-        f"with plt.rc_context({{'hatch.linewidth': {linewidth!r}}}):",
+        f"with plt.rc_context({params!r}):",
         *[f"    {ln}" for ln in lines],
     ]
 
@@ -1666,7 +1675,7 @@ class _ScriptBuilder:
 
     def _hatch_call_lines(self, da: str, xname: str, yname: str, style: dict,
                           tail: list[str], hc: str | None = None) -> None:
-        """ハッチの呼び出し行 (hatch.linewidth の rc_context 付き)。
+        """ハッチの呼び出し行 (線の太さ・色の rc_context 付き)。
         render._hatch_artist と1対1対応。hc を渡すと結果を変数に受ける (反転ガード用)。"""
         hatch_lines = [
             f"{hc} = ax.contourf(" if hc else "ax.contourf(",
@@ -1677,7 +1686,7 @@ class _ScriptBuilder:
             *tail,
             ")",
         ]
-        self.body += _wrap_hatch_lw(hatch_lines, float(style.get("linewidth", 1.0)))
+        self.body += _wrap_hatch_rc(hatch_lines, style)
 
     def _contour_call_lines(self, cs: str, da: str, xname: str, yname: str,
                             style: dict, tail: list[str]) -> None:
@@ -2965,7 +2974,7 @@ class _ScriptBuilder:
                             drawing_dim, drawing_range, scale: float,
                             offset: float = 0.0, *, err: bool = False) -> str:
         """散布図・バブル図の1変数を切り出す行を emit し、1次元 float 配列の式を返す。
-        render._scatter_take_values と1対1対応 (err=True は誤差配列: 倍率のみ・|err|)。"""
+        render._scatter_take_values と1対1対応 (err=True は誤差配列: |err|、値の変換なし)。"""
         name = self._name(f"da_{tag}")
         sel = {dim: val for dim, val in (fixed or {}).items()
                 if dim in ds[var].dims}
@@ -2980,8 +2989,7 @@ class _ScriptBuilder:
                 f"{name} = {name}.sel({drawing_dim}=slice("
                 f"{sl.start!r}, {sl.stop!r}))")
         if err:
-            return (f"np.abs(np.asarray({name}.values, dtype=float)"
-                    f" * {scale!r}).ravel()")
+            return f"np.abs(np.asarray({name}.values, dtype=float)).ravel()"
         if scale != 1.0 or offset != 0.0:
             # 括弧が無いと .ravel() がオフセットのリテラルに掛かる
             return (f"(np.asarray({name}.values, dtype=float)"
@@ -2993,12 +3001,11 @@ class _ScriptBuilder:
                              drawing_range) -> tuple[bool, bool]:
         """エラーバーの誤差配列 `{prefix}_xe` / `{prefix}_ye` の行を emit する。
         render._scatter_error_arrays + _fit_error_to_mask と1対1対応 (本体と同じ
-        固定・範囲、倍率のみ、本体と同じ mask)。(x あり, y あり) を返す。"""
+        固定・範囲、値の変換なし、本体と同じ mask)。(x あり, y あり) を返す。"""
         eb = style.get("errorbar") or {}
         emitted = []
-        for axis, var_key, fixed_key, scale_key in (
-                ("x", "x_variable", "x_fixed", "x_value_scale"),
-                ("y", "y_variable", "y_fixed", "y_value_scale")):
+        for axis, var_key, fixed_key in (("x", "x_variable", "x_fixed"),
+                                         ("y", "y_variable", "y_fixed")):
             var = eb.get(var_key)
             if not var or var not in ds:
                 emitted.append(False)
@@ -3006,7 +3013,7 @@ class _ScriptBuilder:
             name = f"{prefix}_{axis}e"
             self.body.append(f"{name} = " + self._scatter_take_lines(
                 tag, dsid, ds, var, layer.get(fixed_key), drawing_dim, drawing_range,
-                float(style.get(scale_key, 1.0)), err=True))
+                1.0, err=True))
             self.body.append(
                 f"{name} = np.concatenate([{name}[:{prefix}_n], "
                 f"np.full(max(0, {prefix}_n - len({name})), np.nan)])[{prefix}_mask]")
@@ -3474,11 +3481,9 @@ class _ScriptBuilder:
         if err_src == "variable" and err_cfg.get("variable"):
             self.needs_numpy = True
             err_da = self._name("da_bar_err")
+            # 誤差には値の変換を掛けない (render._bar_error_values と 1 対 1)
             self._emit_line_data(err_da, panel, layer,
                                   err_cfg["variable"], datasets)
-            err_vt = _value_transform_line(err_da, style)
-            if err_vt:
-                self.body.append(err_vt)
             err_kw_parts.append(f"{err_axis_name}=np.abs({err_da}.values)")
         elif err_src == "constant":
             c = float(err_cfg.get("constant", 0.0))

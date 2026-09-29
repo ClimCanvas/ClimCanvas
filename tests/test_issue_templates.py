@@ -73,3 +73,5 @@ def test_issue_template_chooser():
     # 選択画面のフォームはアプリの About と同じ (版の事前入力は About 側だけ)
     urls = {link["url"] for link in links}
     assert set(about.FEEDBACK_FORMS.values()) <= urls
+    # 先頭はサイトのマニュアル (About と同じサイト)
+    assert links[0]["url"].startswith(about.SITE_URL), links[0]

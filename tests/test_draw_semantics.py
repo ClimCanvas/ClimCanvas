@@ -679,7 +679,8 @@ def test_map_scatter_grid_offsets_and_values():
     _use(ds)
     panel = mc_config.default_panel()
     ms = mc_config.default_map_scatter_layer("ds0", "f")
-    ms["style"].update({"value_scale": 2.0, "value_offset": 5.0})
+    ms["style"].update({"use_cmap": True,   # 値で色付け (config の既定は単色)
+                        "value_scale": 2.0, "value_offset": 5.0})
     panel["layers"] = [ms]
     fig = _render(panel)
     from matplotlib.collections import PathCollection
@@ -715,7 +716,9 @@ def test_map_scatter_station_point_and_unfixed_dim_guard():
     # 時刻を固定すれば1点: offsets = (lon, lat)、値 = その時刻の値
     panel = mc_config.default_panel()
     panel["selection"] = {"time": "2024-01-02"}
-    panel["layers"] = [mc_config.default_map_scatter_layer("ds0", "tmean")]
+    ms = mc_config.default_map_scatter_layer("ds0", "tmean")
+    ms["style"]["use_cmap"] = True   # 値で色付け (config の既定は単色)
+    panel["layers"] = [ms]
     fig = _render(panel)
     pcs = [c for c in fig.axes[0].collections
            if isinstance(c, PathCollection)]
@@ -1083,6 +1086,38 @@ def test_bar_errorbar_segments():
         assert ok, f"x={x} のエラーバー ({v}±2) が見つからない"
 
 
+@pytest.mark.parametrize("source", ["variable", "constant"])
+def test_bar_errorbar_not_value_transformed(source):
+    """棒グラフのエラー量には値の変換 (倍率 a・加算 b) を掛けない (2026-09-29 の仕様)。
+
+    棒の高さは a × p + b、エラーバーの半長は |誤差| のまま。v1.00.1 までは変数の
+    エラー量に a × err + b が掛かっていた (KNOWN_ISSUES.md KI-1)。
+    """
+    from matplotlib.collections import LineCollection
+    ds = _bars_ds()
+    ds["e"] = (("level",), np.array([0.5, -1.0, 0.25, 2.0]))
+    _use(ds)
+    a, b = 3.0, -100.0
+    bar = mc_config.default_bar_layer("ds0", "p")
+    bar["style"]["value_scale"] = a
+    bar["style"]["value_offset"] = b
+    if source == "variable":
+        bar["style"]["errorbar"].update({"source": "variable", "variable": "e"})
+        expected = np.abs(ds["e"].values)
+    else:
+        bar["style"]["errorbar"].update({"source": "constant", "constant": 1.5})
+        expected = np.full(ds.sizes["level"], 1.5)
+    fig = _render(_line_panel_for([bar]))
+    lcs = [c for c in fig.axes[0].collections if isinstance(c, LineCollection)]
+    assert lcs, "エラーバーの LineCollection が見つからない"
+    segs = [np.asarray(s, dtype=float) for lc in lcs for s in lc.get_segments()]
+    for x, v, e in zip(ds["level"].values, a * ds["p"].values + b, expected):
+        ok = any(np.allclose(s[:, 0], x)
+                 and np.isclose(s[:, 1].min(), v - e)
+                 and np.isclose(s[:, 1].max(), v + e) for s in segs)
+        assert ok, f"x={x} のエラーバー ({v}±{e}) が見つからない (誤差に値の変換が掛かっている?)"
+
+
 def test_stackplot_cumulative_boundaries():
     ds = _bars_ds()
     _use(ds)
@@ -1119,6 +1154,37 @@ def test_hatch_levels_and_pattern():
     # colors="none" なので面は塗られない (ハッチ線のみ)
     fc = np.asarray(cs[0].get_facecolor(), dtype=float)
     assert fc.size == 0 or np.all(fc[:, 3] == 0.0)
+
+
+def test_hatch_line_color():
+    """ハッチ線の色 (style.color) が画素に出る。既定は黒 (2026-09-29 追加)。
+
+    matplotlib はハッチの色を artist 作成時の rcParams['hatch.color'] から取るので、
+    render.hatch_rc_params の rc_context が効いていることを画素で確かめる。
+    """
+    import io
+    import matplotlib.pyplot as plt
+
+    def red_pixels(color):
+        _use(_map_ds())
+        panel = mc_config.default_panel()
+        hatch = mc_config.default_hatch_layer("ds0", "f")
+        hatch["style"].update({"levels": [100.0, 400.0], "pattern": "/",
+                               "density": 4, "linewidth": 2.0})
+        if color:
+            hatch["style"]["color"] = color
+        panel["layers"] = [hatch]
+        fig = _render(panel)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=60)
+        plt.close(fig)
+        buf.seek(0)
+        img = plt.imread(buf)
+        return int(((img[..., 0] > 0.8) & (img[..., 1] < 0.3)
+                    & (img[..., 2] < 0.3)).sum())
+
+    assert red_pixels(None) == 0          # 既定 = 黒
+    assert red_pixels("#ff0000") > 100    # 赤のハッチ線
 
 
 # --- 1-27: スタイル反映 — 単色・線種・太さ・reverse_cmap ---
@@ -2203,10 +2269,11 @@ def test_tick_label_rotation():
 
 
 def test_scatter_errorbar_segments():
-    """散布図のエラーバー: 線分の半長 = |倍率 × 誤差変数| (x/y 独立)。
+    """散布図のエラーバー: 線分の半長 = |誤差変数| (x/y 独立)。
 
-    誤差は本体と同じ切り出しで、値変換は倍率のみ (オフフセット非適用)・
-    絶対値で正規化される (errorbar_kwargs / _scatter_xy_arrays with_errors)。
+    誤差は本体と同じ切り出しで、値の変換 (倍率・加算) は掛けず、絶対値で正規化
+    される (errorbar_kwargs / _scatter_xy_arrays with_errors)。2026-09-29 までは
+    倍率だけ掛けていた (KNOWN_ISSUES.md KI-1)。
     """
     from matplotlib.collections import LineCollection
     ds = xr.Dataset(
@@ -2219,7 +2286,7 @@ def test_scatter_errorbar_segments():
     panel["y_variable"] = "b"
     layer = mc_config.default_scatter_layer("ds0")
     layer["drawing_dim"] = "i"
-    layer["style"]["x_value_scale"] = 2.0   # 誤差にも倍率だけ掛かる
+    layer["style"]["x_value_scale"] = 2.0    # 誤差には掛からない
     layer["style"]["x_value_offset"] = 10.0  # 誤差には掛からない
     layer["style"]["errorbar"] = {"x_variable": "ea", "y_variable": "eb",
                                   "color": "#000000", "linewidth": 1.0,
@@ -2238,7 +2305,7 @@ def test_scatter_errorbar_segments():
             half["x"] = np.sort(dx)
         else:
             half["y"] = np.sort(dy)
-    np.testing.assert_allclose(half["x"], np.sort(np.abs(2.0 * ds["ea"].values)))
+    np.testing.assert_allclose(half["x"], np.sort(np.abs(ds["ea"].values)))
     np.testing.assert_allclose(half["y"], np.sort(np.abs(ds["eb"].values)))
 
 

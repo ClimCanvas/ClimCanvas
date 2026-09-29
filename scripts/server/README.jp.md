@@ -42,14 +42,17 @@ nftables ルールを永続化するには生成先 (`/etc/climcanvas/climcanvas
 ## 使い方 (利用者)
 
 ```bash
-# サーバにログインして起動 (自分の権限で。ポートは台帳から自動)
+# 1. 手元の PC で、割り当てられたポート (ここでは 8505。管理者から通知され、
+#    assign の案内にも出る) へのトンネルを張りつつサーバにログイン。
+#    前半の 8501 は手元 PC 側のポートで、空いていれば何番でもよい
+ssh -L 8501:localhost:8505 a-san@<server>
+
+# 2. ログインしたサーバ上で起動 (自分の権限で。ポートは台帳から自動)
 scripts/server/start-climcanvas.sh
 # 許可データディレクトリを絞るなら:
 CLIMCANVAS_ALLOWED_DIRS="$HOME/data:/shared/era5" scripts/server/start-climcanvas.sh
 
-# 手元から接続 (assign 時に表示される案内の通り)
-ssh -L 8501:localhost:8501 a-san@<server>
-# → ブラウザで http://localhost:8501
+# 3. 手元 PC のブラウザで http://localhost:8501 を開く
 ```
 
 常駐させたい場合は `start-climcanvas.sh` を systemd user service にする

@@ -202,7 +202,10 @@ def load_custom_cmaps(force_reload: bool = False) -> list[str]:
     """カスタムカラーマップを `custom_cmap_dir()` から読み込んで matplotlib に登録する。
 
     各ファイル名 (拡張子除く) がカラーマップ名になる。返り値は登録に成功した名前のリスト。
-    アプリ起動時に呼ぶ。複数回呼んでも安全 (同じディレクトリなら最初の結果をキャッシュ)。
+    反転名 `<name>_r` も併せて登録する (matplotlib は組み込み cmap にしか `_r` を
+    用意しないため、登録しないと「カラーマップを反転」で解決に失敗する。2026-09-29)。
+    UI 層 (ui/constants.py) の import 時と render_figure の入口で呼ぶ。複数回呼んでも
+    安全 (同じディレクトリなら最初の結果をキャッシュ)。
     """
     global _custom_cmaps_loaded_for_dir
     dir_path = custom_cmap_dir()
@@ -224,15 +227,16 @@ def load_custom_cmaps(force_reload: bool = False) -> list[str]:
         name = path.stem
         _CUSTOM_CMAP_DATA[name] = rgb
         cmap = mcolors.LinearSegmentedColormap.from_list(name, rgb)
-        try:
-            mpl.colormaps.register(cmap, name=name, force=True)
-        except (ValueError, TypeError):
-            # 古い matplotlib 等で force= が未対応な場合は unregister 経由
+        for reg_name, reg_cmap in ((name, cmap), (name + "_r", cmap.reversed())):
             try:
-                mpl.colormaps.unregister(name)
-            except Exception:
-                pass
-            mpl.colormaps.register(cmap, name=name)
+                mpl.colormaps.register(reg_cmap, name=reg_name, force=True)
+            except (ValueError, TypeError):
+                # 古い matplotlib 等で force= が未対応な場合は unregister 経由
+                try:
+                    mpl.colormaps.unregister(reg_name)
+                except Exception:
+                    pass
+                mpl.colormaps.register(reg_cmap, name=reg_name)
     return list(_CUSTOM_CMAP_DATA.keys())
 
 
@@ -277,6 +281,28 @@ def box_polygon(box: dict, n: int = 50):
 def hatch_pattern(style: dict) -> str:
     """ハッチパターン (単一文字) を density 回繰り返した最終文字列を返す。"""
     return str(style.get("pattern", "/")) * int(style.get("density", 3))
+
+
+# ハッチ線の既定 (matplotlib の rcParams の既定と同じ。scriptgen はこれと違うときだけ出す)
+HATCH_DEFAULT_LINEWIDTH = 1.0
+HATCH_DEFAULT_COLOR = "#000000"
+
+
+def hatch_rc_params(style: dict, *, only_changed: bool = False) -> dict:
+    """ハッチ線の太さと色 (plt.rc_context に渡す rcParams)。render/scriptgen 共用。
+
+    matplotlib はハッチの色・太さを artist 作成時の rcParams (hatch.color /
+    hatch.linewidth) から取る (3.10.8 で実測。docs/cartopy_compat_notes.md)。
+    only_changed=True は既定値と違う項目だけ (再現スクリプトを簡潔にする)。
+    """
+    lw = float(style.get("linewidth", HATCH_DEFAULT_LINEWIDTH))
+    color = style.get("color") or HATCH_DEFAULT_COLOR
+    params = {}
+    if not only_changed or lw != HATCH_DEFAULT_LINEWIDTH:
+        params["hatch.linewidth"] = lw
+    if not only_changed or color.lower() != HATCH_DEFAULT_COLOR:
+        params["hatch.color"] = color
+    return params
 
 
 def apply_value_transform(da, style: dict):
@@ -1827,6 +1853,10 @@ def render_figure(figure_config: dict, datasets: dict[str, xr.Dataset]):
     ため取りやめた (2026-08-23) — 回避はユーザー操作に委ね、この変換だけを
     残す (cartopy_compat_notes.md「既知の上流バグ」節)。
     """
+    # カスタムカラーマップの登録を保証する (UI 層を import しない経路 — テストの
+    # コールド実行やコア層だけの利用 — でも custom cmap 名を解決できるように。
+    # 読み込み済みならキャッシュで即返る)
+    load_custom_cmaps()
     try:
         return _render_figure(figure_config, datasets)
     except RenderError:
@@ -2890,9 +2920,8 @@ def _fill_artist(ax, da, xname: str, yname: str, style: dict, **extra_kw):
 
 def _hatch_artist(ax, da, xname: str, yname: str, style: dict, **extra_kw):
     """ハッチ (colors='none' の contourf) の描画呼び出し (地図・断面共通)。
-    scriptgen._hatch_call_lines と1対1対応。"""
-    lw = float(style.get("linewidth", 1.0))
-    with plt.rc_context({"hatch.linewidth": lw}):
+    scriptgen._hatch_call_lines と1対1対応。線の太さと色は hatch_rc_params。"""
+    with plt.rc_context(hatch_rc_params(style)):
         return ax.contourf(
             da[xname], da[yname], da,
             levels=style["levels"],
@@ -3230,7 +3259,8 @@ def _scatter_take_values(ds, varname: str, fixed, drawing_dim, drawing_range,
     scriptgen._scatter_take_lines と1対1対応。
 
     fixed で drawing_dim 以外の次元を1点に固定し、drawing_range で drawing_dim を
-    範囲スライスしてから ravel する。err=True は誤差配列 (倍率のみ・|err|)。
+    範囲スライスしてから ravel する。err=True は誤差配列 (|err|。値の変換は掛けない —
+    誤差は図に表示する単位で用意する前提。棒グラフのエラー量と同じ規則、2026-09-29)。
     """
     da = ds[varname]
     sel = {dim: val for dim, val in (fixed or {}).items()
@@ -3242,7 +3272,7 @@ def _scatter_take_values(ds, varname: str, fixed, drawing_dim, drawing_range,
             ds[drawing_dim], drawing_range[0], drawing_range[1])})
     vals = np.asarray(da.values, dtype=float)
     if err:
-        return np.abs(vals * scale).ravel()
+        return np.abs(vals).ravel()
     if scale != 1.0 or offset != 0.0:
         vals = vals * scale + offset
     return vals.ravel()
@@ -3250,16 +3280,15 @@ def _scatter_take_values(ds, varname: str, fixed, drawing_dim, drawing_range,
 
 def _scatter_error_arrays(ds, layer: dict, style: dict, drawing_dim, drawing_range):
     """エラーバーの誤差配列 (xerr, yerr)。未指定・変数が無い軸は None。
-    scriptgen._scatter_error_lines と1対1対応 (本体と同じ固定・範囲、倍率のみ)。"""
+    scriptgen._scatter_error_lines と1対1対応 (本体と同じ固定・範囲、値の変換なし)。"""
     eb = style.get("errorbar") or {}
     out = []
-    for var_key, fixed_key, scale_key in (("x_variable", "x_fixed", "x_value_scale"),
-                                          ("y_variable", "y_fixed", "y_value_scale")):
+    for var_key, fixed_key in (("x_variable", "x_fixed"), ("y_variable", "y_fixed")):
         var = eb.get(var_key)
         if var and var in ds:
             out.append(_scatter_take_values(
                 ds, var, layer.get(fixed_key), drawing_dim, drawing_range,
-                float(style.get(scale_key, 1.0)), err=True))
+                1.0, err=True))
         else:
             out.append(None)
     return out[0], out[1]
@@ -3274,7 +3303,7 @@ def _scatter_xy_arrays(panel: dict, layer: dict, datasets: dict,
     layer.drawing_range で drawing_dim を範囲スライスしてから ravel する。
     with_errors=True では (x, y, xerr, yerr) を返す — 誤差は
     style.errorbar.x/y_variable を本体と同じ固定・範囲で切り出し、
-    値変換の**倍率のみ** (|scale × err|) を適用して x/y と同じ mask を当てる
+    値の変換は**掛けずに** |err| として x/y と同じ mask を当てる
     (未指定の軸は None)。
     """
     ds = datasets[layer["dataset_id"]]
@@ -4026,7 +4055,7 @@ def _bubble_xyz_arrays(panel: dict, layer: dict, datasets: dict,
     panel.x_variable / y_variable / z_variable から x/y/z を取り、layer の
     x_fixed/y_fixed/z_fixed と drawing_range を適用してから ravel する。
     with_errors=True では (x, y, z, xerr, yerr) — 誤差の扱いは
-    _scatter_xy_arrays と同じ (倍率のみ・|err|・本体と同じ mask)。
+    _scatter_xy_arrays と同じ (値の変換なし・|err|・本体と同じ mask)。
     """
     ds = datasets[layer["dataset_id"]]
     x_var = panel.get("x_variable")
@@ -5084,7 +5113,9 @@ def _bar_error_values(panel: dict, layer: dict, datasets: dict):
 
     source="variable" のとき layer.selection / cyclic 系を引き継いで err 変数を取り、
     |err| に正規化して返す。source="constant" のときは abs(constant)。
-    none/未指定なら None を返す。
+    none/未指定なら None を返す。どちらも値の変換 (value_scale / value_offset) は
+    掛けない — 誤差は図に表示する単位で用意する前提 (2026-09-29。それまでは変数の
+    ときだけ a × err + b を掛けていた = KNOWN_ISSUES.md KI-1)。
     """
     err_cfg = layer["style"].get("errorbar", {})
     src = err_cfg.get("source", "none")
@@ -5093,7 +5124,6 @@ def _bar_error_values(panel: dict, layer: dict, datasets: dict):
         if not var:
             return None
         err_da = _line_layer_data(panel, layer, var, datasets)
-        err_da = apply_value_transform(err_da, layer["style"])
         return np.abs(err_da.values)
     if src == "constant":
         c = float(err_cfg.get("constant", 0.0))

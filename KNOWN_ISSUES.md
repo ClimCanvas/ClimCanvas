@@ -29,4 +29,4 @@ necessarily a bug, so please read that chapter first.
 
 | ID | Affected versions | Feature | Symptom | Effect on values | Fixed in | Listed |
 |---|---|---|---|---|---|---|
-| (none yet) | | | No value-affecting bug has been confirmed so far. | | | |
+| KI-1 | 1.00, 1.00.1 (and earlier internal versions) | Error bars taken from a variable: bar charts in the 1-D plot; scatter and bubble charts | The value transform of the main variable was also applied to the error amounts: bar charts drew \|scale × error + offset\|, scatter and bubble charts drew \|scale × error\|. Error bars given as a constant were not affected. | Error bars had the wrong length whenever the layer had a value transform (scale ≠ 1 or offset ≠ 0). With an offset (e.g. K → °C) the bars of a bar chart became as long as the offset. Error amounts are now never transformed: provide them in the units shown in the figure. | 1.01 | 2026-09-29 |

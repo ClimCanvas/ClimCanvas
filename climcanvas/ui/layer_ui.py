@@ -948,6 +948,9 @@ def hatch_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         t("ハッチ線の太さ"), 0.2, 4.0, 1.0, 0.1,
         help=t("rcParams['hatch.linewidth'] を一時的に変更する"),
         key=f"hatch_lw_{lid}"))
+    layer["style"]["color"] = color_selector(
+        t("ハッチ線の色"), "#000000", key=f"hatch_col_{lid}",
+        meta_store=layer["style"], meta_key="color")
     value_transform_ui(layer["style"], f"hatch_{lid}")
     maskout_ui(layer["style"], f"hatch_{lid}", ds=ds, variable=var,
                required_dims=keep_dims)
@@ -1411,7 +1414,8 @@ def bar_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         s["hatch_pattern"] = None
     # エラーバー (対称、変数 or 定数)
     if st.checkbox(t("エラーバーを表示"), value=False, key=f"bar_err_{lid}",
-                    help=t("変数または定数で対称エラーを描く。値は |err| に正規化される")):
+                    help=t("変数または定数で対称エラーを描く。値は |err| に正規化される。"
+                         "値の変換は掛けないので、図に表示する単位で用意する")):
         err = dict(s.get("errorbar", {}))
         src_label = st.radio(
             t("エラー量"), list(_ERR_SRC_LABELS),
@@ -1596,11 +1600,11 @@ def scatter_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         _ebx = st.selectbox(t("x方向の誤差の変数"), _eb_vars, key=f"sc_ebx_{lid}",
                             format_func=_none_option_labels(_eb_vars).get,
                             help=t("各点の x 方向の誤差 (±値、対称)。本体と同じ"
-                                 "次元固定・範囲で切り出され、値変換は倍率のみ"
-                                 "適用される (|a×err|)"))
+                                 "次元固定・範囲で切り出す。値の変換は掛けないので、"
+                                 "図に表示する単位で用意する"))
         _eby = st.selectbox(t("y方向の誤差の変数"), _eb_vars, key=f"sc_eby_{lid}",
                             format_func=_none_option_labels(_eb_vars).get,
-                            help=t("各点の y 方向の誤差 (±値、対称)"))
+                            help=t("各点の y 方向の誤差 (±値、対称)。値の変換は掛けない"))
         eb["x_variable"] = None if _ebx == _NONE_OPTION else _ebx
         eb["y_variable"] = None if _eby == _NONE_OPTION else _eby
         if eb["x_variable"] or eb["y_variable"]:
@@ -1967,11 +1971,11 @@ def bubble_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         _ebx = st.selectbox(t("x方向の誤差の変数"), _eb_vars, key=f"bb_ebx_{lid}",
                             format_func=_none_option_labels(_eb_vars).get,
                             help=t("各点の x 方向の誤差 (±値、対称)。本体と同じ"
-                                 "次元固定・範囲で切り出され、値変換は倍率のみ"
-                                 "適用される (|a×err|)"))
+                                 "次元固定・範囲で切り出す。値の変換は掛けないので、"
+                                 "図に表示する単位で用意する"))
         _eby = st.selectbox(t("y方向の誤差の変数"), _eb_vars, key=f"bb_eby_{lid}",
                             format_func=_none_option_labels(_eb_vars).get,
-                            help=t("各点の y 方向の誤差 (±値、対称)"))
+                            help=t("各点の y 方向の誤差 (±値、対称)。値の変換は掛けない"))
         eb["x_variable"] = None if _ebx == _NONE_OPTION else _ebx
         eb["y_variable"] = None if _eby == _NONE_OPTION else _eby
         if eb["x_variable"] or eb["y_variable"]:

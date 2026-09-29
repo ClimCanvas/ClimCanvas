@@ -22,6 +22,8 @@ _NOTE_HEAD_LABELS = {"heatmap": "ヒートマップ"}
 _AVG_ROLE_LABELS = {"lat": "緯度平均", "lon": "経度平均", "time": "時間平均",
                     "vertical": "鉛直平均", "other": "範囲平均"}
 _AVG_OP_LABELS = {"mean": "算術平均", "weighted_mean": "cos(lat) 重み付き平均"}
+# 1 次元プロットの値の軸 (axis_units_mixed の value_axis) → 見出し
+_VALUE_AXIS_LABELS = {"y": "縦軸", "y2": "第 2 軸 (右の縦軸)", "x": "横軸 (横棒)"}
 
 
 def fmt_num(v) -> str:
@@ -47,8 +49,35 @@ def _head(note: dict) -> str:
     return f"{label}{axis} {names}".rstrip()
 
 
+def _var_label(var: str, units: str | None) -> str:
+    return f"`{var}`" + (f" [{units}]" if units else "")
+
+
+def _axis_mixed_line(note: dict) -> str:
+    """同じ値の軸に単位か値の変換が違う量が重なっているときの 1 行。"""
+    items = []
+    for e in note.get("entries") or []:
+        s = _var_label(e["variable"], e.get("units"))
+        if not (float(e["scale"]) == 1.0 and float(e["offset"]) == 0.0):
+            s += f" (a = {fmt_num(e['scale'])}, b = {fmt_num(e['offset'])})"
+        items.append(s)
+    axis = t(_VALUE_AXIS_LABELS.get(note.get("value_axis"), "縦軸"))
+    return t("{axis}: 単位か値の変換が違う可能性のある量が重なっている — {items}",
+             axis=axis, items=", ".join(items))
+
+
 def _body(note: dict) -> str:
     kind = note["type"]
+    if kind == "error_untransformed":
+        if note.get("err_variable"):
+            return t("エラー量 {err} には値の変換を掛けていない (誤差は図の単位で用意する)",
+                     err=_var_label(note["err_variable"], note.get("err_units")))
+        return t("エラー量 (定数 {c}) には値の変換を掛けていない (誤差は図の単位で用意する)",
+                 c=fmt_num(note["err_constant"]))
+    if kind == "error_units_mismatch":
+        return t("エラー量 {err} の単位が本体の [{units}] と違う可能性がある",
+                 err=_var_label(note["err_variable"], note.get("err_units")),
+                 units=note["main_units"])
     if kind == "value_transform":
         if note.get("offset") is None:
             return t("倍率 a = {a} (加算なし)", a=fmt_num(note["scale"]))
@@ -100,11 +129,17 @@ def format_notes(notes: list[dict]) -> str:
         lines.append(f"**{head}**")
         groups: dict[tuple, list[dict]] = {}
         for note in items:
-            key = (note.get("layer_index"), tuple(note.get("variables") or ()),
-                   note.get("axis"))
+            if note["type"] == "axis_units_mixed":
+                # パネル単位の項目 (レイヤーに属さない)。軸ごとに 1 行
+                key = ("axis", note.get("value_axis"))
+            else:
+                key = (note.get("layer_index"), tuple(note.get("variables") or ()),
+                       note.get("axis"))
             groups.setdefault(key, []).append(note)
         for group in groups.values():
-            if len(group) == 1:
+            if group[0]["type"] == "axis_units_mixed":
+                lines.append(f"- {_axis_mixed_line(group[0])}")
+            elif len(group) == 1:
                 lines.append(f"- {_head(group[0])}: {_body(group[0])}")
             else:
                 lines.append(f"- {_head(group[0])}")

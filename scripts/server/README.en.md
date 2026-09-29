@@ -45,14 +45,18 @@ the systemd nftables service or by adding
 ## Usage (users)
 
 ```bash
-# Log in to the server and start ClimCanvas (under your own account; the port comes from the table)
+# 1. On your own machine, log in to the server with a tunnel to your assigned
+#    port (here 8505; the administrator tells you, and it is shown by assign).
+#    8501 is a port on your own machine: any free port will do.
+ssh -L 8501:localhost:8505 alice@<server>
+
+# 2. In that session on the server, start ClimCanvas under your own account
+#    (the launcher looks up your port in the table)
 scripts/server/start-climcanvas.sh
 # To restrict the data directories the app may open:
 CLIMCANVAS_ALLOWED_DIRS="$HOME/data:/shared/era5" scripts/server/start-climcanvas.sh
 
-# From your own machine, open a tunnel (as shown when the port was assigned)
-ssh -L 8501:localhost:8501 alice@<server>
-# then open http://localhost:8501 in a browser
+# 3. In a browser on your own machine, open http://localhost:8501
 ```
 
 To keep ClimCanvas running permanently, wrap `start-climcanvas.sh` in a

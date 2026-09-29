@@ -5,7 +5,9 @@
 """汎用の小さな UI 部品 (ラベル整形・カラーマップ/色セレクタ・フォントサイズ入力など)。"""
 
 import functools as _functools
+import os as _os
 import re as _re
+import unicodedata as _unicodedata
 
 import pandas as pd
 import streamlit as st
@@ -104,6 +106,61 @@ def dim_choices(values) -> list:
 def dim_choice_label(v) -> str:
     """dim_choices の要素の表示ラベル (数値は %g、文字列はそのまま)。"""
     return f"{v:g}" if isinstance(v, float) else str(v)
+
+
+def _display_width(s: str) -> int:
+    """表示幅 (半角換算。全角 (東アジア幅 W/F) は 2)。"""
+    return sum(2 if _unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
+
+
+def _take_width(s: str, budget: int, *, from_end: bool = False) -> str:
+    """s の先頭 (from_end なら末尾) から表示幅 budget に収まる分を取る。"""
+    out = []
+    used = 0
+    for c in (reversed(s) if from_end else s):
+        w = _display_width(c)
+        if used + w > budget:
+            break
+        out.append(c)
+        used += w
+    return "".join(reversed(out)) if from_end else "".join(out)
+
+
+def shorten_label(s: str, max_width: int = 24) -> str:
+    """パス・ファイル名を selectbox の表示用に短くする (値は変えない)。
+
+    ホームディレクトリは `~` に置き換え、それでも表示幅 (半角換算) が
+    max_width を超えるときは中央を「…」で省略して先頭と末尾を残す
+    (Finder 流。先頭のテーマ名と末尾の日付・版の両方が読める)。
+    サイドバーの selectbox は 1 行固定で末尾を「…」に落とすため、長い名前が
+    最後まで読めない — 表示は format_func でここを通し、全文は直下の
+    caption (折り返す) に出す (2026-09-28)。format_func 用なので t() は呼ばない
+    (docs/i18n_guide.md 4 節 3)。
+    """
+    home = _os.path.expanduser("~")
+    if home and home != "~" and (s == home or s.startswith(home + _os.sep)):
+        s = "~" + s[len(home):]
+    if _display_width(s) <= max_width:
+        return s
+    budget = max_width - 1  # 「…」の分
+    head = _take_width(s, budget // 2)
+    tail = _take_width(s, budget - budget // 2, from_end=True)
+    return f"{head}…{tail}"
+
+
+# 強調 (* _)・コード (`)・リンク/色指定 ([ ])・HTML (< >)・取り消し (~)・
+# 表 (|)・LaTeX ($)・色指定/絵文字 (:)・見出し (#) と、エスケープ文字自身 (\\)
+_MD_SPECIAL = _re.compile(r"([\\`*_\[\]<>~|$:#])")
+
+
+def md_plain(s: str) -> str:
+    """文字列を markdown の記法として解釈されないようにエスケープする。
+
+    st.caption / st.markdown に生のファイル名・パスを入れると `*` や `_` が
+    強調に、`:blue[...]` が色指定に化ける。該当する ASCII 記号を `\\` で逃がす
+    (CommonMark はすべての ASCII 記号のバックスラッシュエスケープを認める)。
+    """
+    return _MD_SPECIAL.sub(r"\\\1", s)
 
 
 def union_coord_values(datasets, dim):
