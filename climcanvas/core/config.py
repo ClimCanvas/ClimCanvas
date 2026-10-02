@@ -278,6 +278,30 @@ def default_section_panel() -> dict:
         "y_dim": None,                # 実際の次元名 (例: "level", "time")
         "selection": {},              # x/y 以外の次元の固定値
         "ranges": {},                 # {次元名: [下限, 上限]} 軸方向の範囲制限
+        # 経路断面 (docs/section_extension_plan.md)。None = 従来の断面 (格子線に沿う、
+        # 内挿なし)。dict なら経路上の点へ双一次内挿し、x_dim は合成次元
+        # render.SECTION_PATH_DIM ("path") にする。kind ごとのキー:
+        #   {"kind": "parallel", "lat": 35.0, "lon_range": [125.0, 145.0], "npoints": None}
+        #   {"kind": "meridian", "lon": 130.0, "lat_range": [25.0, 45.0], "npoints": None}
+        #   {"kind": "great_circle", "start": [125.0, 30.0], "end": [140.0, 40.0],
+        #    "npoints": None}
+        # npoints: None = 自動 (経路長 ÷ 格子間隔を切り上げ + 1)
+        "section_path": None,
+        # 地形マスク: 全レイヤーをデータの値のまま描いた上に、地面より下を塗った多角形を
+        # 重ねる (欠損にはしない。docs/section_extension_guide.md 5 節)。method:
+        #   "surface_pressure": 地上気圧の変数 (鉛直座標が気圧のとき)
+        #   "surface_height":   地形高度の変数 (鉛直座標が高度のとき)
+        #   "height_field":     高度の変数 (height_variable、鉛直を持つ) と地形高度の変数
+        #                       から、各列で高度 = 地形高度 になる気圧を求める (鉛直座標が気圧)
+        # dataset_id / variable = 地上気圧または地形高度 (水平 2 次元、時刻はあってもよい)。
+        # 単位は units 属性から鉛直座標の単位へ換算する (Pa ⇄ hPa、m ⇄ km、ジオポテンシャルは g で割る)
+        "terrain": {
+            "show": False,
+            "method": "surface_pressure",
+            "dataset_id": None, "variable": None,
+            "height_dataset_id": None, "height_variable": None,
+            "color": "#7f7f7f",       # tab10 の gray (UI の色選択に存在する HEX)
+        },
         "axis": {
             "invert_x": False,
             "invert_y": False,        # 気圧軸 (上が低圧) や Hovmöller (時間下向き) で True
@@ -286,6 +310,9 @@ def default_section_panel() -> dict:
             # x軸が経度のとき、180° を中心とした東経・西経表記
             # (120°E … 180° … 120°W) で目盛文字を描く。False で数値のまま
             "x_lon_east_west": False,
+            # 横軸の目盛に、その位置の経度・緯度を 2 段で併記する (格子線断面の格子番号軸・
+            # 大円断面の距離軸向け。render.section_x_lonlat が経緯度を求められる断面だけ)
+            "x_lonlat_ticks": False,
             # 時間軸の strftime 書式 (例: "%Y", "%Y-%m", "%m/%d")。None で matplotlib 既定。
             # 時間軸が x/y のどちらかに来ているときだけ適用される
             "time_axis_format": None,
@@ -1112,6 +1139,11 @@ def default_map_settings() -> dict:
         # (散布点・トラックの点) と基準ベクトルは陸の上に出す (zorder は
         # render.LAND_FG_ZORDER / MAP_FG_ZORDER)。キーが無い旧設定は False (背景)
         "land": {"show": False, "color": "#d9d2c2", "above_data": False},
+        # 同じ図の鉛直断面パネルの経路を線で重ねる (docs/section_extension_guide.md 6 節)。
+        # 要素: {"panel_id": 参照する断面パネルの panel_id (figure_config 内)、
+        #        "color", "width", "linestyle", "end_labels": 端点に文字を出すか,
+        #        "labels": [始点, 終点] の文字, "label_fontsize"}。空 = 表示しない
+        "section_paths": [],
         "ocean": {"show": False, "color": "#cfe2f3"},
         # Natural Earth の解像度 (海岸線・国境線・陸域・海域の塗りつぶしに共通)。
         # "auto" = cartopy の自動 (表示範囲の短辺が 50° 以下で 50m、15° 以下で

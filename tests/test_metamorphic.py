@@ -21,6 +21,8 @@ import pytest
 import xarray as xr
 
 from climcanvas.core import config as mc_config
+from climcanvas.core import dataset as mc_dataset
+from climcanvas.core import render as mc_render
 from test_consistency import _RENDER_RUNNER, _ROOT, _run_cold
 
 
@@ -273,3 +275,57 @@ def test_curvilinear_y_storage_order_equivalence(method, curvilinear_sample_path
     cfg["panels"] = [panel]
     _assert_identical(cfg, curvilinear_sample_path, cfg, p_flip, tmp_path,
                       f"curvilinear y 反転 ({method})", exact=False)
+
+
+# --- 経路断面 (section_path) ---
+
+def _great_circle_section_cfg(y_dim: str, start, end, npoints=50):
+    panel = mc_config.default_section_panel()
+    panel["x_dim"] = mc_render.SECTION_PATH_DIM
+    panel["y_dim"] = y_dim
+    panel["section_path"] = {"kind": "great_circle", "start": list(start),
+                             "end": list(end), "npoints": npoints}
+    panel["selection"] = {"time": "2024-01-01T06:00:00"}
+    panel["axis"]["invert_y"] = True
+    fill = mc_config.default_fill_layer("ds0", "t")
+    fill["style"].update({"vmin": 200.0, "vmax": 300.0, "levels": 21})
+    cont = mc_config.default_contour_layer("ds0", "z")
+    cont["style"]["labels"] = {"show": False}
+    panel["layers"] = [fill, cont]
+    cfg = mc_config.default_figure_config()
+    cfg["panels"] = [panel]
+    return cfg
+
+
+def test_section_path_expansion_equivalence(sample_path, tmp_path):
+    """1 次元格子を 2 次元座標 (meshgrid) に展開しても大円断面はほぼ同じ。
+
+    格子番号の逆算は 1 次元 (軸ごとの線形内挿) と 2 次元 (接平面での双一次の逆写像) で
+    手法が違い完全一致はしない (2.5° 格子で 3e-3 格子) ので、標本化した値を許容誤差つきで
+    比べる (図の画素比較はしない: 値のわずかな差で塗りの境界が動き、構造的一致の閾値
+    0.5% を超える 1% 程度の画素差が出る — 実測 2026-09-30)。
+    """
+    p1, p2 = _regional_1d_and_2d(sample_path, tmp_path)
+    cfg = _great_circle_section_cfg("level", (105.0, 5.0), (195.0, 55.0))
+    panel = cfg["panels"][0]
+    vals = []
+    for path in (p1, p2):
+        ds = mc_dataset.open_dataset(str(path))
+        da = mc_render.select_section_data(
+            ds, "t", panel["selection"], None, panel["x_dim"], panel["y_dim"],
+            path=panel["section_path"])
+        vals.append(da.values)
+    assert np.isfinite(vals[0]).all()
+    span = float(np.nanmax(vals[0]) - np.nanmin(vals[0]))
+    assert np.abs(vals[0] - vals[1]).max() < 1e-3 * span
+
+
+def test_section_path_y_storage_order_equivalence(curvilinear_sample_path, tmp_path):
+    """2 次元座標格子の y (行) の格納順を反転しても経路断面は変わらない (点の格子番号が
+    ny − 1 − fj になるだけで、内挿の重みは同じ)。"""
+    ds = xr.open_dataset(curvilinear_sample_path)
+    p_flip = tmp_path / "curvi_yflip_section.nc"
+    ds.isel(y=slice(None, None, -1)).to_netcdf(p_flip)
+    cfg = _great_circle_section_cfg("lev", (118.0, 27.0), (160.0, 44.0))
+    _assert_identical(cfg, curvilinear_sample_path, cfg, p_flip, tmp_path,
+                      "大円断面: curvilinear y 反転", exact=False)

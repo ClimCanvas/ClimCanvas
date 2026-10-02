@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 import xarray as xr
-from matplotlib.collections import QuadMesh
+from matplotlib.collections import PolyCollection, QuadMesh
 from matplotlib.contour import ContourSet
 
 from climcanvas.core import config as mc_config
@@ -2825,3 +2825,271 @@ def test_curvilinear_contourf_levels_and_region_error():
         _render(_curvilinear_panel({"lon_min": 10.0, "lon_max": 20.0,
                                     "lat_min": -60.0, "lat_max": -50.0}))
     assert ei.value.msg_id == "region_outside_grid"
+
+
+# --- 1-19: 経路断面 (section_path) — 配列 = 経路上の点へ独立に計算した双一次内挿、
+#           格子線断面 = 行の切り出しそのもの (内挿なし) ---
+
+def _curvilinear_ds_3d(ny: int = 12, nx: int = 16, nlev: int = 3) -> xr.Dataset:
+    """_curvilinear_ds に鉛直 (lev) を足したもの。値 = 100 k + 10 i + j (k = 層番号、
+    i = 行番号、j = 列番号) で、経緯度は格子番号の 1 次式なので (i, j) が解析的に逆算できる。"""
+    base = _curvilinear_ds(ny, nx)
+    j, i = np.meshgrid(np.arange(nx, dtype=float), np.arange(ny, dtype=float))
+    k = np.arange(nlev, dtype=float)[:, None, None]
+    vals = 100.0 * k + 10.0 * i + j
+    return xr.Dataset(
+        {"f": (("lev", "y", "x"), vals, {"units": "1"})},
+        coords={**base.coords, "lev": ("lev", [1000.0, 850.0, 500.0][:nlev], {"units": "hPa"})})
+
+
+def _analytic_indices(lon, lat):
+    """_curvilinear_ds の経緯度 lon = 120 + 2j + 0.3i, lat = 20 + 2i − 0.2j を (i, j) について解く。"""
+    a = np.array([[0.3, 2.0], [2.0, -0.2]])
+    sol = np.linalg.solve(a, np.stack([np.asarray(lon) - 120.0, np.asarray(lat) - 20.0]))
+    return sol[0], sol[1]
+
+
+def _path_section_panel(x_dim, section_path=None, selection=None):
+    panel = mc_config.default_section_panel()
+    panel["x_dim"] = x_dim
+    panel["y_dim"] = "lev"
+    panel["section_path"] = section_path
+    panel["selection"] = dict(selection or {})
+    fill = mc_config.default_fill_layer("ds0", "f")
+    fill["style"].update({"method": "pcolormesh", "levels": [0.0, 100.0, 200.0, 300.0]})
+    panel["layers"] = [fill]
+    return panel
+
+
+def test_section_path_array_matches_independent_bilinear():
+    """等緯度線の経路断面: 描画配列 = 経路の各点の (i, j) を解析的に求めて
+    値の式 100k + 10i + j に入れた値 (双一次内挿は 1 次式を厳密に再現する)。
+    格子番号の逆算は接平面での近似なので許容 0.05 (格子番号の誤差 5e-3 相当)。"""
+    ds = _curvilinear_ds_3d()
+    _use(ds)
+    path = {"kind": "parallel", "lat": 30.0, "lon_range": [126.0, 148.0], "npoints": 23}
+    fig = _render(_path_section_panel(mc_render.SECTION_PATH_DIM, path))
+    qm = _quadmesh(fig.axes[0])
+    got = np.asarray(np.ma.filled(qm.get_array(), np.nan), dtype=float).reshape(3, 23)
+    lon = np.linspace(126.0, 148.0, 23)
+    i, j = _analytic_indices(lon, np.full(23, 30.0))
+    expected = 100.0 * np.arange(3)[:, None] + 10.0 * i + j
+    assert np.isfinite(got).all()
+    np.testing.assert_allclose(got, expected, atol=0.05)
+    # 横軸 = 経度 (メッシュのセル境界は隣り合う経度の中点)
+    edges = qm.get_coordinates()[0, :, 0]
+    np.testing.assert_allclose(edges[1:-1], (lon[:-1] + lon[1:]) / 2)
+
+
+def test_section_path_great_circle_axis_is_distance_and_outside_is_nan():
+    """大円の経路断面: 横軸 = 始点からの距離 (km、独立に haversine で計算)、格子の外へ
+    出た点は欠損。"""
+    ds = _curvilinear_ds_3d()
+    _use(ds)
+    path = {"kind": "great_circle", "start": [125.0, 25.0], "end": [175.0, 45.0],
+            "npoints": 30}
+    fig = _render(_path_section_panel(mc_render.SECTION_PATH_DIM, path))
+    qm = _quadmesh(fig.axes[0])
+    got = np.asarray(np.ma.filled(qm.get_array(), np.nan), dtype=float).reshape(3, 30)
+    lon, lat, _ = mc_render.great_circle_points((125.0, 25.0), (175.0, 45.0), 30)
+    i, j = _analytic_indices(lon, lat)
+    inside = (i >= 0) & (i <= 11) & (j >= 0) & (j <= 15)
+    assert inside[:5].all() and not inside[-5:].all()
+    assert np.isfinite(got[:, inside]).all()
+    np.testing.assert_allclose(got[:, inside],
+                               (100.0 * np.arange(3)[:, None] + 10.0 * i + j)[:, inside],
+                               atol=0.05)
+    assert np.isnan(got[:, ~inside]).all()
+    lon1, lat1 = np.deg2rad(125.0), np.deg2rad(25.0)
+    lo, la = np.deg2rad(lon), np.deg2rad(lat)
+    h = np.sin((la - lat1) / 2) ** 2 + np.cos(lat1) * np.cos(la) * np.sin((lo - lon1) / 2) ** 2
+    dist = 2 * 6371.0 * np.arcsin(np.sqrt(h))
+    edges = qm.get_coordinates()[0, :, 0]
+    np.testing.assert_allclose(edges[1:-1], (dist[:-1] + dist[1:]) / 2, rtol=1e-6)
+
+
+def test_section_grid_row_is_exact_row_without_interpolation():
+    """格子線断面 (x_dim = x、行 y を固定): 配列 = その行の値そのもの。"""
+    ds = _curvilinear_ds_3d()
+    _use(ds)
+    fig = _render(_path_section_panel("x", None, {"y": 5.0}))
+    qm = _quadmesh(fig.axes[0])
+    got = np.asarray(np.ma.filled(qm.get_array(), np.nan), dtype=float).reshape(3, 16)
+    np.testing.assert_array_equal(got, ds["f"].sel(y=5.0).values)
+
+
+# --- 1-20: 地形マスク — 地面の線 = 独立計算 (単位換算・log p 内挿)、多角形は全レイヤーの上 ---
+
+def _terrain_ds(ny: int = 12, nx: int = 16) -> xr.Dataset:
+    """_curvilinear_ds_3d と同じ格子の地表変数: 地形高度 zs [m] と地上気圧 ps [Pa]。"""
+    base = _curvilinear_ds(ny, nx)
+    j, i = np.meshgrid(np.arange(nx, dtype=float), np.arange(ny, dtype=float))
+    zs = 1500.0 * np.exp(-((i - 6.0) ** 2 / 8.0 + (j - 7.0) ** 2 / 12.0))
+    ps = 1000.0e2 * np.exp(-zs / 8000.0)
+    return xr.Dataset({"zs": (("y", "x"), zs, {"units": "m"}),
+                       "ps": (("y", "x"), ps, {"units": "Pa"})}, coords=base.coords)
+
+
+def _terrain_panel(method, x_dim="x", selection=None):
+    panel = _path_section_panel(x_dim, None, selection or {"y": 6.0})
+    panel["terrain"] = {**mc_config.default_section_panel()["terrain"], "show": True,
+                        "method": method, "dataset_id": "ds1",
+                        "variable": "ps" if method == "surface_pressure" else "zs",
+                        "height_dataset_id": "ds0", "height_variable": "f"}
+    return panel
+
+
+def _terrain_polygon(ax):
+    polys = [c for c in ax.collections if isinstance(c, PolyCollection)
+             and not isinstance(c, QuadMesh)]
+    assert len(polys) == 1, f"地面の多角形が 1 つのはず: {len(polys)}"
+    return polys[0]
+
+
+def test_terrain_surface_pressure_ground_line_and_polygon():
+    """地上気圧 [Pa] を hPa に換算した地面の線が、行 y = 6 の ps / 100 に一致し、多角形は
+    地面の線から軸の下端 (気圧の大きい側) まで、全レイヤーより上 (zorder 2.5) に描かれる。"""
+    ds = _curvilinear_ds_3d()
+    _DATASETS["ds0"], _DATASETS["ds1"] = ds, _terrain_ds()
+    panel = _terrain_panel("surface_pressure")
+    x, ground, pressure_like = mc_render.section_terrain_ground(panel, _DATASETS)
+    expected = _DATASETS["ds1"]["ps"].sel(y=6.0).values / 100.0
+    np.testing.assert_allclose(ground, expected, rtol=1e-6)
+    assert pressure_like
+    fig = _render(panel)
+    ax = fig.axes[0]
+    poly = _terrain_polygon(ax)
+    assert poly.get_zorder() == 2.5
+    ylim = ax.get_ylim()
+    verts = poly.get_paths()[0].vertices
+    assert verts[:, 1].max() == pytest.approx(max(ylim))       # 下端 = 軸の端 (自動範囲は不変)
+    assert np.isin(np.round(np.clip(expected, min(ylim), max(ylim)), 6),
+                   np.round(verts[:, 1], 6)).all()             # 地面の線が頂点に入っている
+    assert max(c.get_zorder() for c in ax.collections if c is not poly) < 2.5
+
+
+def test_terrain_height_field_matches_log_p_interpolation():
+    """高度の変数と地形高度: 各列で高度 = 地形高度 になる気圧が、log p の線形内挿を numpy で
+    独立に計算した値と一致。最下層より下に地面がある列は NaN (描かない)。"""
+    ds = _curvilinear_ds_3d()
+    # f を「高度」に見立てる: 100k + 10i + j (m)。lev = 1000 / 850 / 500 hPa の 3 面
+    ds["f"].attrs["units"] = "m"
+    _DATASETS["ds0"], _DATASETS["ds1"] = ds, _terrain_ds()
+    panel = _terrain_panel("height_field")
+    x, ground, _ = mc_render.section_terrain_ground(panel, _DATASETS)
+    z = ds["f"].sel(y=6.0).values                    # (lev, x)
+    lev = ds["lev"].values
+    zs = _DATASETS["ds1"]["zs"].sel(y=6.0).values
+    expected = np.full(zs.shape, np.nan)
+    for k in range(zs.size):
+        if zs[k] <= z[0, k]:
+            continue                                  # 地面が最下層より下
+        if zs[k] > z[-1, k]:
+            expected[k] = lev[-1]
+            continue
+        expected[k] = np.exp(np.interp(zs[k], z[:, k], np.log(lev)))
+    np.testing.assert_allclose(ground, expected, rtol=1e-9, equal_nan=True)
+    assert np.isnan(expected).any() and np.isfinite(expected).any()
+
+
+def test_terrain_errors_are_clear():
+    """単位の換算不能・方法と鉛直座標の不一致・変数なし は msg_id 付きの RenderError。"""
+    ds = _curvilinear_ds_3d()
+    _DATASETS["ds0"], _DATASETS["ds1"] = ds, _terrain_ds()
+    cases = [
+        ({"method": "surface_height", "variable": "zs"}, "terrain_method_mismatch"),
+        ({"method": "surface_pressure", "variable": "zs"}, "terrain_units_unknown"),
+        ({"method": "surface_pressure", "variable": "nope"}, "terrain_variable_missing"),
+        ({"method": "height_field", "variable": "zs", "height_variable": "nope"},
+         "terrain_variable_missing"),
+    ]
+    for override, msg_id in cases:
+        panel = _terrain_panel("surface_pressure")
+        panel["terrain"].update(override)
+        with pytest.raises(mc_render.RenderError) as ei:
+            _render(panel)
+        assert ei.value.msg_id == msg_id, override
+    # 鉛直座標の単位が無い
+    ds2 = ds.copy()
+    ds2["lev"].attrs.pop("units")
+    _DATASETS["ds0"] = ds2
+    with pytest.raises(mc_render.RenderError) as ei:
+        _render(_terrain_panel("surface_pressure"))
+    assert ei.value.msg_id == "terrain_vertical_units_unknown"
+
+
+# --- 1-21: 地図への経路表示 — 線の頂点 = 断面の経路の点、参照の検査 ---
+
+def _overlay_figure(section_panel, item=None):
+    section_panel["panel_id"] = "sec"
+    m = mc_config.default_panel()
+    m["panel_id"] = "map"
+    m["projection"] = {"name": "PlateCarree", "central_longitude": 140.0}
+    m["region"] = {"lon_min": 110.0, "lon_max": 170.0, "lat_min": 10.0, "lat_max": 50.0}
+    m["layers"] = [mc_config.default_fill_layer("ds0", "f")]
+    m["layers"][0]["selection"] = {"lev": 1000.0}
+    m["map"]["section_paths"] = [item or {"panel_id": "sec", "color": "red", "width": 2.0,
+                                          "linestyle": "-", "end_labels": True,
+                                          "labels": ["P", "Q"]}]
+    cfg = mc_config.default_figure_config()
+    cfg["figure"]["layout"] = {**cfg["figure"]["layout"], "nrows": 1, "ncols": 2}
+    cfg["panels"] = [m, section_panel]
+    return cfg
+
+
+def _overlay_lines(ax, color="red"):
+    return [ln for ln in ax.lines if ln.get_color() == color]
+
+
+def test_section_overlay_vertices_match_path_points():
+    """大円断面の経路を地図に重ねた線の頂点 (データ座標 = PlateCarree の経緯度) が
+    great_circle_points の点と一致し、端点の文字が両端に置かれる。"""
+    ds = _curvilinear_ds_3d()
+    _use(ds)
+    path = {"kind": "great_circle", "start": [125.0, 25.0], "end": [150.0, 40.0], "npoints": 30}
+    cfg = _overlay_figure(_path_section_panel(mc_render.SECTION_PATH_DIM, path))
+    fig = mc_render.render_figure(cfg, _DATASETS)
+    ax = fig.axes[0]
+    lines = _overlay_lines(ax)
+    assert len(lines) == 1
+    lon, lat, _ = mc_render.great_circle_points((125.0, 25.0), (150.0, 40.0), 30)
+    xy = lines[0].get_xydata()
+    np.testing.assert_allclose(xy[:, 0], lon)
+    np.testing.assert_allclose(xy[:, 1], lat)
+    assert lines[0].get_zorder() == 2 and lines[0].get_linewidth() == 2.0
+    texts = {t.get_text(): t for t in ax.texts if t.get_text() in ("P", "Q")}
+    assert set(texts) == {"P", "Q"}
+    assert texts["P"].get_position() == pytest.approx((lon[0], lat[0]))
+    assert texts["Q"].get_position() == pytest.approx((lon[-1], lat[-1]))
+    assert texts["P"].get_ha() == "right" and texts["Q"].get_ha() == "left"
+    # 端点の文字は任意の文字列。空欄の端には出さない
+    cfg["panels"][0]["map"]["section_paths"][0]["labels"] = ["", "Kyushu"]
+    fig = mc_render.render_figure(cfg, _DATASETS)
+    labels = [t.get_text() for t in fig.axes[0].texts]
+    assert "Kyushu" in labels and "" not in labels and "P" not in labels
+
+
+def test_section_overlay_grid_row_and_reference_errors():
+    """格子線断面の経路 = 固定した行の格子点の経緯度 (横軸の範囲内)。参照先が無い /
+    鉛直断面でないときは msg_id 付きの RenderError。"""
+    ds = _curvilinear_ds_3d()
+    _use(ds)
+    sec = _path_section_panel("x", None, {"y": 6.0})
+    sec["ranges"] = {"x": [3.0, 12.0]}
+    fig = mc_render.render_figure(_overlay_figure(sec), _DATASETS)
+    xy = _overlay_lines(fig.axes[0])[0].get_xydata()
+    expected_lon = ds["lon"].sel(y=6.0, x=slice(3.0, 12.0)).values
+    expected_lat = ds["lat"].sel(y=6.0, x=slice(3.0, 12.0)).values
+    np.testing.assert_allclose(xy[:, 0], expected_lon)
+    np.testing.assert_allclose(xy[:, 1], expected_lat)
+
+    cfg = _overlay_figure(_path_section_panel("x", None, {"y": 6.0}),
+                          item={"panel_id": "nope", "color": "red"})
+    with pytest.raises(mc_render.RenderError) as ei:
+        mc_render.render_figure(cfg, _DATASETS)
+    assert ei.value.msg_id == "section_overlay_panel_missing"
+    cfg = _overlay_figure(_path_section_panel("x", None, {"y": 6.0}),
+                          item={"panel_id": "map", "color": "red"})
+    with pytest.raises(mc_render.RenderError) as ei:
+        mc_render.render_figure(cfg, _DATASETS)
+    assert ei.value.msg_id == "section_overlay_not_section"

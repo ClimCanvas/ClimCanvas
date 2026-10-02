@@ -614,6 +614,68 @@ def test_central_lon_hidden_and_auto_for_platecarree_region(sample_path):
     assert _has_clon_input("NorthPolarStereo")
 
 
+def test_central_lon_follows_region_for_robinson(sample_path):
+    """Robinson / EqualEarth + 緯度経度範囲指定では「中心経度を範囲の中央に合わせる」
+    (既定 ON) で中心経度が範囲の中央に追従し、外すと入力欄に戻る (ユーザー要望 2026-10-02)。
+    極投影などは従来どおり常に入力欄。
+    """
+    at = _load_app(sample_path)
+    at.selectbox(key="proj_name_map0").set_value("Robinson")
+    at.run()
+    assert not at.exception
+
+    def _has_clon_input(proj):
+        return any(n.key == f"central_lon_map0_{proj}" for n in at.get("number_input"))
+
+    # 範囲未指定: チェックは出ず入力あり
+    assert _has_clon_input("Robinson")
+    assert not any(c.key == "clon_follow_map0_Robinson" for c in at.get("checkbox"))
+
+    # 範囲指定 ON → チェック (既定 ON) が出て入力が消え、範囲の中央が config に入る
+    at.checkbox(key="reg_check_map0_Robinson").set_value(True)
+    at.run()
+    at.number_input(key="reg_lonmin_map0_Robinson").set_value(100.0)
+    at.number_input(key="reg_lonmax_map0_Robinson").set_value(200.0)
+    at.run()
+    assert not at.exception
+    assert at.checkbox(key="clon_follow_map0_Robinson").value is True
+    assert not _has_clon_input("Robinson")
+    assert at.session_state["panel_cfg_0"]["projection"]["central_longitude"] == 150.0
+
+    # 範囲を変えると追従する
+    at.number_input(key="reg_lonmax_map0_Robinson").set_value(160.0)
+    at.run()
+    assert not at.exception
+    assert at.session_state["panel_cfg_0"]["projection"]["central_longitude"] == 130.0
+
+    # チェックを外すと入力欄 (初期値 = 範囲の中央) が出て、手動の値が使われる
+    at.checkbox(key="clon_follow_map0_Robinson").set_value(False)
+    at.run()
+    assert not at.exception
+    assert _has_clon_input("Robinson")
+    assert at.number_input(key="central_lon_map0_Robinson").value == 130.0
+    at.number_input(key="central_lon_map0_Robinson").set_value(180.0)
+    at.run()
+    assert not at.exception
+    assert at.session_state["panel_cfg_0"]["projection"]["central_longitude"] == 180.0
+
+    # EqualEarth も同じ (範囲指定は投影法ごとなので入れ直す)。極投影は従来どおり入力欄のみ
+    at.selectbox(key="proj_name_map0").set_value("EqualEarth")
+    at.run()
+    assert not at.exception
+    assert _has_clon_input("EqualEarth")                # 範囲未指定
+    at.checkbox(key="reg_check_map0_EqualEarth").set_value(True)
+    at.run()
+    assert not at.exception
+    assert at.checkbox(key="clon_follow_map0_EqualEarth").value is True
+    assert not _has_clon_input("EqualEarth")
+    at.selectbox(key="proj_name_map0").set_value("NorthPolarStereo")
+    at.run()
+    assert not at.exception
+    assert _has_clon_input("NorthPolarStereo")
+    assert not any(c.key == "clon_follow_map0_NorthPolarStereo" for c in at.get("checkbox"))
+
+
 def test_region_inputs_tab_order(sample_path):
     """描画範囲の入力の DOM 順 (= TAB 移動順) が 経度最小→最大→緯度最小→最大。
 

@@ -10,8 +10,8 @@ abstract: "A browser-based GUI for plotting atmospheric and ocean data in netCDF
 authors:
   - family-names: "Mori"
     given-names: "Masato"
-version: "1.01"
-date-released: "2026-09-29"
+version: "1.02"
+date-released: "2026-10-03"
 doi: "10.5281/zenodo.22997360"
 license: "AGPL-3.0-only"
 repository-code: "https://github.com/ClimCanvas/ClimCanvas"

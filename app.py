@@ -23,6 +23,7 @@ import time as time_mod
 logging.getLogger("streamlit.elements.lib.policies").setLevel(logging.ERROR)
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -64,6 +65,7 @@ from climcanvas.ui.state_io import (STARTUP_PRESET_PATH, _PRESET_ONLY_KEYS,
                                     _delete_startup_preset,
                                     _from_json_safe, _is_session_excluded,
                                     _list_sessions, _migrate_legacy_value,
+                                    _migrate_loaded_session,
                                     _load_startup_preset_once, _load_session_dirs,
                                     _load_session_from_disk, _save_startup_preset,
                                     _save_session_to_disk, _serialize_session,
@@ -71,6 +73,7 @@ from climcanvas.ui.state_io import (STARTUP_PRESET_PATH, _PRESET_ONLY_KEYS,
 from climcanvas.ui.widgets import (available_font_families,
                                    cjk_font_advice, cmap_selector,
                                    color_selector, common_fonts_available,
+                                   coord_label,
                                    fontsize_input, linked_range_ui,
                                    linked_time_range_ui, maskout_ui,
                                    md_plain, parse_float_list,
@@ -205,6 +208,25 @@ def _coord_files_ui(index: int, item: dict, allowed_dirs: list[str]) -> None:
             st.session_state[lon_key] = current[0] if current else ""
         if lat_key not in st.session_state:
             st.session_state[lat_key] = current[1] if len(current) > 1 else ""
+        # 別のファイル (最初に座標ファイルを付けたもの) と同じ座標ファイルを使う
+        # チェック (ClimCORE の Z と地表ファイルに同じ FLON / FLAT を付ける手間を省く。
+        # 自動では付けない — 格子の取り違えに気づけるよう明示の操作にする。
+        # ユーザー要望 2026-09-30)。入力欄より前に置く (欄の session_state を書き換えて
+        # から欄をインスタンス化する)
+        source = next((it for it in st.session_state.get("datasets", [])
+                       if it is not item and it.get("coord_paths")), None)
+        if source is not None:
+            src_paths = list(source["coord_paths"])
+            same = st.checkbox(
+                t("{dsid} と同じ座標ファイルを使う ({files})",
+                  dsid=source["id"],
+                  files=", ".join(os.path.basename(p) for p in src_paths)),
+                value=(current == src_paths), key=f"_coord_same_{index}")
+            if same and current != src_paths:
+                item["coord_paths"] = src_paths
+                st.session_state[lon_key] = src_paths[0]
+                st.session_state[lat_key] = src_paths[1] if len(src_paths) > 1 else ""
+                st.rerun()
         # ブラウザは入力欄より前に置く (選択結果を欄の session_state に書いてから
         # 欄をインスタンス化する)
         if allowed_dirs and st.toggle(t("📁 許可ディレクトリから選ぶ"),
@@ -357,7 +379,7 @@ with st.sidebar:
                             # ボタン・アップローダー系キーは Streamlit が programmatic 設定を
                             # 拒否するためスキップ (古い JSON がこれらを含んでいても安全)
                             applied = 0
-                            for k, v in loaded.items():
+                            for k, v in _migrate_loaded_session(loaded).items():
                                 if _is_session_excluded(k):
                                     continue
                                 st.session_state[k] = _migrate_legacy_value(
@@ -588,9 +610,11 @@ mode_options = []
 if (roles["lat"] and roles["lon"]) or mc_dataset.track_capable(ds):
     mode_options.append("map")
 # 2 次元座標 (curvilinear 格子) では lat/lon が dim ではないため、経緯度を軸にとる
-# 断面 (鉛直断面・時間断面) は出さない (docs/curvilinear_grid_plan.md の制約)
+# 時間断面は出さない (docs/curvilinear_grid_plan.md の制約)
 _curvilinear = mc_dataset.is_curvilinear(ds, roles)
-if roles["vertical"] and (roles["lon"] or roles["lat"]) and not _curvilinear:
+# 鉛直断面は 2 次元座標格子でも出す (格子線に沿う断面と、経路 (等緯度線・等経度線・大円)
+# に沿って内挿する断面。docs/section_extension_plan.md)。時間断面は従来どおり出さない
+if roles["vertical"] and (roles["lon"] or roles["lat"]):
     mode_options.append("vsec")
 if (roles["time"] and (roles["vertical"] or roles["lat"] or roles["lon"])
         and not _curvilinear):
@@ -759,7 +783,14 @@ _LAT_LABEL_LABELS = {"inline": "図中 (既定)", "edge": "枠沿い", "none": "
 _LAT_EDGE_SIDE_LABELS = {"both": "両方", "left": "左のみ", "right": "右のみ"}
 _TICK_DIR_LABELS = {"out": "外側", "in": "内側", "inout": "両方"}
 _VSEC_ORIENT_LABELS = {"lon_height": "経度–高度 (緯度を固定)",
-                       "lat_height": "緯度–高度 (経度を固定)"}
+                       "lat_height": "緯度–高度 (経度を固定)",
+                       # 2 次元座標格子の格子線断面 (内挿なし) と、経路断面 (双一次内挿。
+                       # 大円は 1 次元格子でも選べる)。docs/section_extension_guide.md
+                       "grid_row": "格子の行に沿う (x–高度、行を固定)",
+                       "grid_col": "格子の列に沿う (y–高度、列を固定)",
+                       "parallel": "等緯度線に沿う (経度–高度、内挿)",
+                       "meridian": "等経度線に沿う (緯度–高度、内挿)",
+                       "great_circle": "2 点間の大円に沿う (距離–高度、内挿)"}
 _TSEC_KIND_LABELS = {"time_height": "時間–高度", "time_lat": "時間–緯度",
                      "time_lon": "時間–経度"}
 _DIST_FAMILY_LABELS = {"hist": "ヒストグラム・ECDF", "box": "箱ひげ・バイオリン"}
@@ -810,6 +841,32 @@ _RENDER_ERROR_LABELS = {
         "{lat_max:g}]) にこの 2 次元座標格子の格子点がありません "
         "(データの経度 [{data_lon_min:g}, {data_lon_max:g}]、"
         "緯度 [{data_lat_min:g}, {data_lat_max:g}])。",
+    "section_path_no_lonlat":
+        "経路に沿った断面には経度・緯度の座標が必要ですが、データセットから認識できませんでした。",
+    "section_path_dim_conflict":
+        "データセットに次元 {dim!r} が既にあります。この名前は断面の経路用に予約されているので、次元名を変えてください。",
+    "section_path_unknown_kind":
+        "断面の経路の種類が不明です: {kind!r} ('parallel' / 'meridian' / 'great_circle' のいずれか)",
+    "section_path_antipodal":
+        "断面の始点と終点が地球の反対側 (対蹠点) にあり、2 点を結ぶ大円が一つに決まりません。どちらかの点を動かしてください。",
+    "section_path_outside_grid":
+        "断面の経路 ({kind}) がデータの格子 (経度 {lon_min:g}〜{lon_max:g}、緯度 {lat_min:g}〜{lat_max:g}) の外にあります。経路を動かすか、経度の規約を確認してください。",
+    "terrain_vertical_units_unknown":
+        "地形マスクには鉛直座標 {dim!r} が気圧か高度かの判定が必要ですが、units 属性 {units!r} を認識できません (hPa、Pa、m、km など)。",
+    "terrain_method_mismatch":
+        "地形マスクの方法 {method!r} は、鉛直座標が{kind} ({dim!r} [{units}]) のときは使えません。{expected} を使ってください。",
+    "terrain_variable_missing":
+        "地形マスクの変数 {var!r} がデータセット {dataset!r} にありません。",
+    "terrain_units_unknown":
+        "地形の変数 {var!r} の units 属性 {units!r} を鉛直座標の単位 {target!r} に換算できません ({expected} など)。",
+    "terrain_profile_dims":
+        "地形の変数 {var!r} は、ほかの次元を固定すると断面の横軸 {x_dim!r} だけになる必要がありますが、次元 {dims} が残っています。",
+    "terrain_no_lonlat":
+        "データセット {dataset!r} の地形の変数 {var!r} に経度・緯度の座標が認識できないため、断面の経路に沿って標本化できません (そのデータセットに座標ファイルを付けてください)。",
+    "section_overlay_panel_missing":
+        "地図が断面の経路を描くために参照しているパネル (panel_id {panel_id!r}) が図にありません。",
+    "section_overlay_not_section":
+        "地図が断面の経路として参照しているパネル {panel_id!r} は鉛直断面ではないか、経路を決められません。",
     "layout_too_small":
         "レイアウト {nrows}×{ncols} にパネル {n_panels} 個は配置できません。"
         "行数・列数を増やしてください。",
@@ -1662,6 +1719,11 @@ def _plot_size_ui(mode: str, mode_key: str):
     return box_aspect
 
 
+# 緯度経度範囲を指定したとき、中心経度を範囲の中央に追従させる選択肢 (既定 ON) を出す投影法。
+# PlateCarree は常に追従 (入力なし)、極投影・Lambert・Orthographic は常に手動
+_CLON_FOLLOW_PROJECTIONS = ("Robinson", "EqualEarth")
+
+
 def _map_projection_ui(ds, roles, mode_key):
     """「投影法・領域」セクション。(projection, region, proj_name, is_polar) を返す。"""
     section_header(t("投影法・領域"))
@@ -1789,7 +1851,30 @@ def _map_projection_ui(ds, roles, mode_key):
     # lon_min > lon_max (0°またぎ指定) は中央の式が半周ずれるため対象外
     # (従来どおり手動)。他投影は region があっても中心経度で見た目が変わる
     # (極投影の回転・Lambert の円錐軸・Robinson/EqualEarth の湾曲・
-    # Orthographic の可視半球) ので常に表示する
+    # Orthographic の可視半球) ので表示する。ただし Robinson / EqualEarth は
+    # 「中心経度を範囲の中央に合わせる」(既定 ON) で範囲の中央に追従させ、外したときだけ
+    # 入力を出す (ユーザー要望 2026-10-02。範囲を動かすたびに中心経度を打ち直す手間を
+    # 省く。極投影・Lambert・Orthographic は回転・円錐軸・可視半球の意図的な指定が
+    # 普通なので従来どおり)。旧セッションには追従キーが無いので、復元時に
+    # state_io._migrate_loaded_session が OFF を補って図を変えない
+    follow_region = (proj_name in _CLON_FOLLOW_PROJECTIONS and region
+                     and region["lon_min"] <= region["lon_max"]
+                     and st.checkbox(t("中心経度を範囲の中央に合わせる"), value=True,
+                                     key=f"clon_follow_{mode_key}_{proj_name}",
+                                     help=t("経度範囲を変えると中心経度も範囲の中央に"
+                                          "追従します。外すと中心経度を数値で指定"
+                                          "できます (範囲の中央から離すと図が湾曲"
+                                          "します)")))
+    if proj_name in _CLON_FOLLOW_PROJECTIONS:
+        # 追従を外した直後は、入力欄を今の範囲の中央から始める (追従前に入力欄が持っていた
+        # 古い値を出さない)。"_" 始まりのキーはセッションに保存されないので、旧セッションの
+        # 復元 (追従 OFF + 保存した中心経度) ではここを通らず保存値のまま
+        _flag = f"_clon_following_{mode_key}_{proj_name}"
+        if follow_region:
+            st.session_state[_flag] = True
+        elif st.session_state.get(_flag):
+            st.session_state[f"central_lon_{mode_key}_{proj_name}"] = default_clon
+            st.session_state[_flag] = False
     if (proj_name == "PlateCarree" and region
             and region["lon_min"] <= region["lon_max"]):
         central_lon = default_clon
@@ -1801,6 +1886,10 @@ def _map_projection_ui(ds, roles, mode_key):
         else:
             st.caption(t("中心経度は範囲の中央 ({clon:g}°) を自動使用",
                          clon=default_clon))
+    elif follow_region:
+        central_lon = default_clon
+        st.caption(t("中心経度は範囲の中央 ({clon:g}°) を自動使用",
+                     clon=default_clon))
     else:
         central_lon = float(st.number_input(t("中心経度"), -180.0, 360.0, default_clon, 10.0,
                                             key=f"central_lon_{mode_key}_{proj_name}"))
@@ -2121,6 +2210,7 @@ def _map_mode_ui(datasets, ds, roles, mode_key):
                                 panel={"selection": selection, "region": region})
 
         map_cfg = _map_settings_ui(mode_key, proj_name, is_polar, projection)
+        map_cfg["section_paths"] = _section_overlay_ui(mode_key)
 
     panel = mc_config.default_panel()
     panel["selection"] = selection
@@ -2131,63 +2221,382 @@ def _map_mode_ui(datasets, ds, roles, mode_key):
     return panel, selection, time_label_settings
 
 
+def _section_overlay_ui(mode_key):
+    """地図に重ねる断面の経路 (map.section_paths、docs/section_extension_guide.md 6 節)。
+
+    同じ図の鉛直断面モードのパネル (設定済みのもの) を選ぶ。参照は panel_id
+    (= セッションのパネル ID の文字列。図の組み立て時に各 panel に付ける)。
+    """
+    pid = mode_key[len("map"):]
+    panels = st.session_state.get("panels") or []
+    index_of = {str(p["id"]): i + 1 for i, p in enumerate(panels)}
+    cands = [str(p["id"]) for p in panels
+             if str(p["id"]) != pid
+             and st.session_state.get(f"plot_mode_{p['id']}") == "vsec"
+             and st.session_state.get(f"panel_cfg_{p['id']}") is not None]
+    with st.expander(t("断面の経路"), expanded=False):
+        if not cands:
+            st.caption(t("鉛直断面のパネルを追加して設定すると、その経路をこの地図に線で重ねられます"))
+            return []
+        key = f"secov_sel_{mode_key}"
+        stored = [v for v in (st.session_state.get(key) or []) if v in cands]
+        if st.session_state.get(key) != stored:
+            st.session_state[key] = stored          # 消えたパネルへの参照は外す
+        chosen = st.multiselect(
+            t("重ねる断面のパネル"), cands,
+            format_func=lambda v: t("パネル {n}", n=index_of.get(v, v)), key=key)
+        if not chosen:
+            return []
+        color = color_selector(t("線の色"), "#d62728", key=f"secov_color_{mode_key}")
+        width = float(st.number_input(t("線の太さ"), 0.2, 10.0, 1.5, 0.1,
+                                      key=f"secov_width_{mode_key}"))
+        linestyle = st.selectbox(t("線種"), list(GL_LINESTYLE_LABELS),
+                                 format_func=tr_labels(GL_LINESTYLE_LABELS).get,
+                                 index=1, key=f"secov_ls_{mode_key}")
+        end_labels = st.checkbox(t("端点に文字を付ける (A, B, …)"), value=True,
+                                 key=f"secov_labels_{mode_key}")
+        letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        items = []
+        for i, p in enumerate(chosen):
+            labels = [letters[(2 * i) % 26], letters[(2 * i + 1) % 26]]
+            if end_labels:
+                # 断面ごとに始点・終点の文字を自由に (空欄ならその端には出さない)
+                c1, c2 = st.columns(2)
+                with c1:
+                    labels[0] = st.text_input(
+                        t("始点の文字 (パネル {n})", n=index_of.get(p, p)), value=labels[0],
+                        key=f"secov_lab0_{mode_key}_{p}")
+                with c2:
+                    labels[1] = st.text_input(
+                        t("終点の文字 (パネル {n})", n=index_of.get(p, p)), value=labels[1],
+                        key=f"secov_lab1_{mode_key}_{p}")
+            items.append({"panel_id": p, "color": color, "width": width,
+                          "linestyle": linestyle, "end_labels": bool(end_labels),
+                          "labels": [str(labels[0]), str(labels[1])],
+                          "label_fontsize": 10.0})
+        return items
+
+
+def _lonlat_input(label, value, key, lo, hi):
+    """経度・緯度の number_input (0.1° 刻み、小数 2 桁)。"""
+    return float(st.number_input(label, value=float(value), min_value=float(lo),
+                                 max_value=float(hi), step=0.1, format="%.2f", key=key))
+
+
+def _section_path_ui(orient, ds, roles, mode_key):
+    """経路断面 (等緯度線・等経度線・大円) の入力欄。panel["section_path"] を返す。
+
+    初期値はデータの経緯度範囲 (lonlat_bounds) から: 等緯度線は中央の緯度と経度の全範囲、
+    等経度線は中央の経度と緯度の全範囲、大円は領域の中央を通る東西の線 (両端 15% を空ける)。
+    点の数は自動 (経路長 ÷ 格子間隔) か指定。
+    """
+    b = mc_dataset.lonlat_bounds(ds, roles) or {}
+    lon0, lon1 = float(b.get("lon_min", -180.0)), float(b.get("lon_max", 180.0))
+    lat0, lat1 = float(b.get("lat_min", -90.0)), float(b.get("lat_max", 90.0))
+    lat_c = round((lat0 + lat1) / 2, 1)
+    lon_c = round((lon0 + lon1) / 2, 1)
+    if orient == "parallel":
+        lat = _lonlat_input(t("緯度 (°N)"), lat_c, f"vsec_par_lat_{mode_key}", -90.0, 90.0)
+        c1, c2 = st.columns(2)
+        with c1:
+            lo = _lonlat_input(t("経度の始点"), round(lon0, 1), f"vsec_par_lon0_{mode_key}",
+                               -720.0, 720.0)
+        with c2:
+            hi = _lonlat_input(t("経度の終点"), round(lon1, 1), f"vsec_par_lon1_{mode_key}",
+                               -720.0, 720.0)
+        spec = {"kind": "parallel", "lat": lat, "lon_range": [lo, hi], "npoints": None}
+    elif orient == "meridian":
+        lon = _lonlat_input(t("経度 (°E)"), lon_c, f"vsec_mer_lon_{mode_key}", -720.0, 720.0)
+        c1, c2 = st.columns(2)
+        with c1:
+            lo = _lonlat_input(t("緯度の始点"), round(lat0, 1), f"vsec_mer_lat0_{mode_key}",
+                               -90.0, 90.0)
+        with c2:
+            hi = _lonlat_input(t("緯度の終点"), round(lat1, 1), f"vsec_mer_lat1_{mode_key}",
+                               -90.0, 90.0)
+        spec = {"kind": "meridian", "lon": lon, "lat_range": [lo, hi], "npoints": None}
+    else:
+        w = lon1 - lon0
+        c1, c2 = st.columns(2)
+        with c1:
+            slon = _lonlat_input(t("始点の経度"), round(lon0 + 0.15 * w, 1),
+                                 f"vsec_gc_lon0_{mode_key}", -720.0, 720.0)
+            slat = _lonlat_input(t("始点の緯度"), lat_c, f"vsec_gc_lat0_{mode_key}",
+                                 -90.0, 90.0)
+        with c2:
+            elon = _lonlat_input(t("終点の経度"), round(lon1 - 0.15 * w, 1),
+                                 f"vsec_gc_lon1_{mode_key}", -720.0, 720.0)
+            elat = _lonlat_input(t("終点の緯度"), lat_c, f"vsec_gc_lat1_{mode_key}",
+                                 -90.0, 90.0)
+        spec = {"kind": "great_circle", "start": [slon, slat], "end": [elon, elat],
+                "npoints": None}
+    auto = st.checkbox(t("点の数を自動にする (点の間隔 ≈ 格子間隔)"), value=True,
+                       key=f"vsec_np_auto_{mode_key}")
+    if not auto:
+        spec["npoints"] = int(st.number_input(t("点の数"), min_value=2, max_value=5000,
+                                              value=200, step=10, key=f"vsec_np_{mode_key}"))
+    # 参考表示: 経路長・点の間隔・格子間隔 (render と同じ関数で計算)
+    try:
+        full = mc_render.section_path_spec(spec, ds)
+        length = mc_render.section_path_length_km(full)
+        n = full["npoints"]
+        lat_ref = {"parallel": spec.get("lat"),
+                   "meridian": float(np.mean(spec.get("lat_range", [0.0, 0.0])))}.get(
+            orient, float(np.mean([spec.get("start", [0, 0])[1], spec.get("end", [0, 0])[1]])))
+        spacing = mc_render.grid_spacing_km(ds, roles, lat_ref)
+        st.caption(t("経路長 {length} km、{n} 点、点の間隔 約 {step} km (格子間隔 約 {grid} km)",
+                     length=f"{length:.0f}", n=n,
+                     step=f"{length / max(n - 1, 1):.1f}", grid=f"{spacing:.1f}"))
+        if orient in ("parallel", "meridian"):
+            lon_p, lat_p, _ = mc_render.section_path_points(full)
+            fj, fi, _, _, _ = mc_render.section_path_indices(ds, lon_p, lat_p)
+            ok = np.isfinite(fj) & np.isfinite(fi)
+            if ok.any():
+                vals = (lon_p if orient == "parallel" else lat_p)[ok]
+                st.caption(t("このうち格子の中にある範囲: {lo}〜{hi}",
+                             lo=f"{vals.min():.1f}", hi=f"{vals.max():.1f}"))
+            else:
+                st.warning(t("経路がデータの格子の外にあります"))
+    except mc_render.RenderError as exc:
+        st.warning(_error_text(exc))
+    return spec
+
+
+_TERRAIN_METHOD_LABELS = {"surface_pressure": "地上気圧の変数 (鉛直座標が気圧)",
+                          "surface_height": "地形高度の変数 (鉛直座標が高度)",
+                          "height_field": "高度の変数と地形高度の変数 (鉛直座標が気圧)"}
+
+
+def _terrain_ui(datasets, ds, y_dim, mode_key):
+    """地形マスクの設定 (docs/section_extension_guide.md 5 節)。panel["terrain"] を返す。
+
+    方法は鉛直座標の単位 (気圧 / 高度) で絞る。変数は読み込み済みの全ファイルから、
+    水平の 2 次元だけ (時刻はあってもよい) の変数を「dsid: 変数名」で選ぶ。
+    """
+    cfg = mc_config.default_section_panel()["terrain"]
+    kind = mc_render.vertical_axis_kind(ds[y_dim].attrs.get("units"))
+    with st.expander(t("地形マスク"), expanded=False):
+        if kind is None:
+            st.caption(t("鉛直座標 {dim} の単位 ({units}) から気圧か高度か判定できないため、"
+                         "地形マスクは使えません",
+                         dim=y_dim, units=str(ds[y_dim].attrs.get("units", ""))))
+            return cfg
+        cfg["show"] = st.checkbox(
+            t("地面より下を地形で覆う"), value=False, key=f"vsec_ter_show_{mode_key}",
+            help=t("全レイヤーをデータの値のまま描いた上に、地面より下を塗った多角形を"
+                   "重ねる (地下の値を欠損にはしない。色の自動範囲には地下の値も含まれる)"))
+        if not cfg["show"]:
+            return cfg
+        methods = (["surface_pressure", "height_field"] if kind == "pressure"
+                   else ["surface_height"])
+        mkey = f"vsec_ter_method_{mode_key}"
+        if st.session_state.get(mkey) not in methods:
+            st.session_state[mkey] = methods[0]
+        cfg["method"] = st.selectbox(t("地面の求め方"), methods,
+                                     format_func=tr_labels(_TERRAIN_METHOD_LABELS).get, key=mkey)
+
+        y_units = str(ds[y_dim].attrs.get("units", ""))
+        units_of = {}
+
+        def _candidates(need_vertical, target, ukind):
+            """「dsid: 変数名」の候補。単位が target に換算できるものを先に並べる。"""
+            good, other = [], []
+            for dsid, d in datasets.items():
+                hd = mc_dataset.horizontal_dims(d, mc_dataset.detect_coord_roles(d))
+                if not hd:
+                    continue
+                for v in d.data_vars:
+                    dims = set(d[v].dims)
+                    if not set(hd) <= dims or need_vertical != (y_dim in dims):
+                        continue
+                    extra = dims - set(hd) - {y_dim}
+                    if len(extra) > 1 or not all(
+                            e in d.coords and np.issubdtype(d[e].dtype, np.datetime64)
+                            for e in extra):
+                        continue
+                    key = f"{dsid}: {v}"
+                    units_of[key] = str(d[v].attrs.get("units", ""))
+                    (good if mc_render.unit_factor(units_of[key], target, ukind) is not None
+                     else other).append(key)
+            return good + other
+
+        def _fmt(key):
+            return f"{key} [{units_of.get(key) or '?'}]"
+
+        if cfg["method"] == "surface_pressure":
+            surf = _candidates(False, y_units, "pressure")
+        else:
+            surf = _candidates(False, "m", "height")
+        if not surf:
+            st.warning(t("水平 2 次元の変数 (地上気圧・地形高度) が読み込み済みのファイルにありません。"
+                         "ファイルを追加してください"))
+            cfg["show"] = False
+            return cfg
+        label = (t("地上気圧の変数") if cfg["method"] == "surface_pressure"
+                 else t("地形高度の変数"))
+        # 方法ごとに別の key (地上気圧 ps と地形高度 zs の選択を別々に覚える)
+        vkey = f"vsec_ter_var_{cfg['method']}_{mode_key}"
+        if st.session_state.get(vkey) not in surf:
+            st.session_state[vkey] = surf[0]
+        choice = st.selectbox(label, surf, key=vkey, format_func=_fmt)
+        cfg["dataset_id"], cfg["variable"] = choice.split(": ", 1)
+        if cfg["method"] == "height_field":
+            hv = _candidates(True, "m", "height")
+            if not hv:
+                st.warning(t("鉛直を持つ高度の変数が読み込み済みのファイルにありません"))
+                cfg["show"] = False
+                return cfg
+            hkey = f"vsec_ter_hvar_{mode_key}"
+            if st.session_state.get(hkey) not in hv:
+                st.session_state[hkey] = hv[0]
+            hchoice = st.selectbox(t("高度の変数 (ジオポテンシャル高度など)"), hv, key=hkey,
+                                   format_func=_fmt)
+            cfg["height_dataset_id"], cfg["height_variable"] = hchoice.split(": ", 1)
+        cfg["color"] = color_selector(t("地面の色"), "#7f7f7f", key=f"vsec_ter_color_{mode_key}")
+        st.caption(t("変数の単位は units 属性から鉛直座標の単位 [{yunits}] に換算して比べる "
+                     "(Pa ⇄ hPa、m ⇄ km、ジオポテンシャル m2 s-2 は g で割る)", yunits=y_units))
+    return cfg
+
+
 def _vsec_mode_ui(datasets, ds, roles, mode_key):
-    """鉛直断面 (vsec) モードのパネル設定 UI。"""
+    """鉛直断面 (vsec) モードのパネル設定 UI。
+
+    向き: 1 次元格子は 経度–高度 / 緯度–高度 (従来、内挿なし) と 大円、2 次元座標格子は
+    格子の行 / 列 (内挿なし) と 等緯度線 / 等経度線 / 大円 (双一次内挿)。経路断面では
+    x_dim = render.SECTION_PATH_DIM ("path")。docs/section_extension_guide.md 4 節。
+    """
+    curvi = mc_dataset.is_curvilinear(ds, roles)
+    hdims = mc_dataset.horizontal_dims(ds, roles) if curvi else None
     with st.sidebar:
         section_header(t("断面"))
         orient_opts = []
-        if roles["lon"]:
-            orient_opts.append("lon_height")
-        if roles["lat"]:
-            orient_opts.append("lat_height")
+        if curvi:
+            orient_opts += ["grid_row", "grid_col", "parallel", "meridian", "great_circle"]
+        else:
+            if roles["lon"]:
+                orient_opts.append("lon_height")
+            if roles["lat"]:
+                orient_opts.append("lat_height")
+            if roles["lon"] and roles["lat"]:
+                orient_opts.append("great_circle")
+        # 別のデータの残留値 (1 次元格子の "lon_height" など) は先頭に戻す
+        okey = f"vsec_orient_{mode_key}"
+        if st.session_state.get(okey) not in orient_opts:
+            st.session_state[okey] = orient_opts[0]
         orient = st.radio(t("向き"), orient_opts,
-                          format_func=tr_labels(_VSEC_ORIENT_LABELS).get,
-                          key=f"vsec_orient_{mode_key}")
-        x_dim = roles["lon"] if orient == "lon_height" else roles["lat"]
+                          format_func=tr_labels(_VSEC_ORIENT_LABELS).get, key=okey)
         y_dim = roles["vertical"]
-        fixed_dim = roles["lat"] if orient == "lon_height" else roles["lon"]
-        # 固定する緯度/経度はレイヤー毎に選ぶ (下の「レイヤー」セクションで指定)
+        section_path = None
+        fixed_dim = None
+        lonlat_ticks = None
+        if orient in ("lon_height", "lat_height"):
+            x_dim = roles["lon"] if orient == "lon_height" else roles["lat"]
+            fixed_dim = roles["lat"] if orient == "lon_height" else roles["lon"]
+            # 固定する緯度/経度はレイヤー毎に選ぶ (下の「レイヤー」セクションで指定)
+            keep_dims = (x_dim, y_dim)
+        elif orient in ("grid_row", "grid_col"):
+            x_dim = hdims[1] if orient == "grid_row" else hdims[0]
+            fixed_dim = hdims[0] if orient == "grid_row" else hdims[1]
+            keep_dims = (x_dim, y_dim)
+        else:
+            x_dim = mc_render.SECTION_PATH_DIM
+            keep_dims = (*(hdims or (roles["lat"], roles["lon"])), y_dim)
+            section_path = _section_path_ui(orient, ds, roles, mode_key)
 
         lev_vals = [float(v) for v in ds[y_dim].values]
         lev_lo, lev_hi = st.select_slider(
             t("高度・気圧レベル範囲"), options=lev_vals,
             value=(lev_vals[0], lev_vals[-1]), key=f"vsec_range_{mode_key}")
         ranges = {} if (lev_lo, lev_hi) == (lev_vals[0], lev_vals[-1]) else {y_dim: [lev_lo, lev_hi]}
-        x_vals = [float(v) for v in ds[x_dim].values]
-        x_label = t("経度範囲") if orient == "lon_height" else t("緯度範囲")
-        x_lo, x_hi = st.select_slider(
-            x_label, options=x_vals,
-            value=(x_vals[0], x_vals[-1]), key=f"vsec_xrange_{mode_key}")
-        if (x_lo, x_hi) != (x_vals[0], x_vals[-1]):
-            ranges[x_dim] = [x_lo, x_hi]
+        if orient in ("lon_height", "lat_height"):
+            x_vals = [float(v) for v in ds[x_dim].values]
+            x_label = t("経度範囲") if orient == "lon_height" else t("緯度範囲")
+            x_lo, x_hi = st.select_slider(
+                x_label, options=x_vals,
+                value=(x_vals[0], x_vals[-1]), key=f"vsec_xrange_{mode_key}")
+            if (x_lo, x_hi) != (x_vals[0], x_vals[-1]):
+                ranges[x_dim] = [x_lo, x_hi]
+        elif orient in ("grid_row", "grid_col"):
+            # 格子番号の範囲 (座標のない dim は 0 始まりの index)
+            x_vals = [float(v) for v in ds[x_dim].values]
+            x_lo, x_hi = st.select_slider(
+                t("格子番号の範囲 ({dim})", dim=x_dim), options=x_vals,
+                value=(x_vals[0], x_vals[-1]), key=f"vsec_grange_{mode_key}")
+            if (x_lo, x_hi) != (x_vals[0], x_vals[-1]):
+                ranges[x_dim] = [x_lo, x_hi]
+        if orient in ("grid_row", "grid_col", "great_circle"):
+            lonlat_ticks = st.checkbox(
+                t("目盛に経度・緯度を併記する"), value=True, key=f"vsec_llticks_{mode_key}",
+                help=t("横軸の目盛ごとに、軸の値 (格子番号・距離) とその位置の経度・緯度を "
+                       "3 段で表示する"))
 
-    variables = mc_dataset.section_variables(ds, x_dim, y_dim)
-    variables_by_ds = {dsid: mc_dataset.section_variables(d, x_dim, y_dim)
-                        for dsid, d in datasets.items()}
+    if section_path is None:
+        variables = mc_dataset.section_variables(ds, x_dim, y_dim)
+        variables_by_ds = {dsid: mc_dataset.section_variables(d, x_dim, y_dim)
+                           for dsid, d in datasets.items()}
+    else:
+        # 経路断面: 水平の 2 次元 (内挿で潰す) と鉛直の 3 つを持つ変数
+        def _path_vars(d):
+            hd = mc_dataset.horizontal_dims(d, mc_dataset.detect_coord_roles(d))
+            if not hd:
+                return []
+            return [str(v) for v in d.data_vars
+                    if all(dim in d[v].dims for dim in (*hd, y_dim))]
+        variables = _path_vars(ds)
+        variables_by_ds = {dsid: _path_vars(d) for dsid, d in datasets.items()}
     if not variables:
         st.error(t("{x_dim} と {y_dim} の両方の次元を持つ変数が見つかりません。",
-                 x_dim=x_dim, y_dim=y_dim))
+                 x_dim=x_dim if section_path is None else "/".join(keep_dims[:-1]),
+                 y_dim=y_dim))
         st.stop()
 
     with st.sidebar:
-        # fixed_dim (緯度 or 経度) はレイヤー毎なので panel.selection からは除外
+        # fixed_dim (緯度 or 経度、格子の行 or 列) はレイヤー毎なので panel.selection からは除外
         selection, time_label_settings = selection_widgets(
-            ds, roles, variables, (x_dim, y_dim),
-            header_label="時刻", skip_dims=(fixed_dim,),
+            ds, roles, variables, keep_dims,
+            header_label="時刻", skip_dims=(fixed_dim,) if fixed_dim else (),
             mode_key=mode_key, show_animation=True)
         # ライン(line)は 1次元プロット専用なので鉛直断面図では選択肢から外す
-        layers_cfg = layers_ui(datasets, variables_by_ds, (x_dim, y_dim),
+        layers_cfg = layers_ui(datasets, variables_by_ds, keep_dims,
                                 [k for k in KIND_LABELS if k not in ("line", "line_bundle", "fill_between", "bar", "stackplot", "scatter", "bubble", "hexbin", "hist2d", "map_scatter", "track", "hist", "ecdf", "box", "violin")],
                                 mode_key, roles=roles, allow_averaging=True,
                                 panel={"selection": selection, "ranges": ranges,
-                                       "x_dim": x_dim, "y_dim": y_dim})
+                                       "x_dim": x_dim, "y_dim": y_dim,
+                                       "section_path": section_path})
+        if orient in ("grid_row", "grid_col") and layers_cfg:
+            # 固定した行・列の経緯度の範囲 (格子の傾きに気づけるように)
+            sel = {**selection, **(layers_cfg[0].get("selection") or {})}
+            if fixed_dim in sel:
+                try:
+                    lon_l = ds[roles["lon"]].sel({fixed_dim: sel[fixed_dim]}).values
+                    lat_l = ds[roles["lat"]].sel({fixed_dim: sel[fixed_dim]}).values
+                    st.caption(t("{dim} = {v} に沿う断面: 緯度 {lat0}〜{lat1}°N、経度 {lon0}〜{lon1}°E (先頭レイヤー)",
+                                 dim=fixed_dim, v=f"{sel[fixed_dim]:g}",
+                                 lat0=f"{np.nanmin(lat_l):.1f}", lat1=f"{np.nanmax(lat_l):.1f}",
+                                 lon0=f"{np.nanmin(lon_l):.1f}", lon1=f"{np.nanmax(lon_l):.1f}"))
+                except (KeyError, TypeError, ValueError):
+                    pass
 
-        axis = axis_settings_ui(ds, roles, x_dim, y_dim, mode_key)
+        if section_path is None:
+            axis = axis_settings_ui(ds, roles, x_dim, y_dim, mode_key)
+        else:
+            x_label_default = {"parallel": coord_label(ds, roles, roles["lon"]),
+                               "meridian": coord_label(ds, roles, roles["lat"]),
+                               "great_circle": "distance [km]"}[orient]
+            axis = axis_settings_ui(ds, roles, x_dim, y_dim, mode_key,
+                                    x_label_default=x_label_default,
+                                    x_is_lon=(orient == "parallel"),
+                                    x_key=f"{x_dim}_{orient}")
+        if lonlat_ticks is not None:
+            axis["x_lonlat_ticks"] = bool(lonlat_ticks)
+        terrain_cfg = _terrain_ui(datasets, ds, y_dim, mode_key)
         frame_cfg, background_cfg = frame_background_ui(
             mode_key, frame_width_only=True)
 
     panel = mc_config.default_section_panel()
     panel["x_dim"], panel["y_dim"] = x_dim, y_dim
+    panel["section_path"] = section_path
+    panel["terrain"] = terrain_cfg
     panel["selection"] = selection
     panel["ranges"] = ranges
     panel["axis"] = axis
@@ -2708,7 +3117,9 @@ for _p in st.session_state["panels"]:
                    "サイドバーの「編集するパネル」で選択して設定してください。",
                    n=_idx))
         continue
-    panels_cfg.append(_cfg)
+    # panel_id = セッションのパネル ID (地図の「断面の経路」が参照する。キャッシュした
+    # panel_cfg は触らず、図に渡すコピーにだけ付ける)
+    panels_cfg.append({**_cfg, "panel_id": str(_pid)})
 if not panels_cfg:
     st.info(t("設定済みのパネルがありません。"))
     st.stop()
@@ -2954,12 +3365,18 @@ with col_script:
     include_save = st.checkbox(t("savefig を含める"), value=True, key="script_include_save")
     include_show = st.checkbox(t("plt.show() を含める"), value=True, key="script_include_show")
     ds_paths_for_script = _script_dataset_paths(path_style)
-    script = mc_scriptgen.generate_script(
-        figure_config, datasets, ds_paths_for_script,
-        figure_output=out_name, figure_dpi=int(dpi),
-        include_save=include_save, include_show=include_show,
-        figure_transparent=out_transparent, figure_tight=out_tight,
-        figure_facecolor=out_facecolor, dataset_renames=dataset_renames)
+    # 描画と同じ設定の検査 (経路断面の点数・地形マスクの単位など) を scriptgen も行う。
+    # 通常は描画側で先に止まるが、描画が通ってスクリプトだけ失敗しても落とさない
+    try:
+        script = mc_scriptgen.generate_script(
+            figure_config, datasets, ds_paths_for_script,
+            figure_output=out_name, figure_dpi=int(dpi),
+            include_save=include_save, include_show=include_show,
+            figure_transparent=out_transparent, figure_tight=out_tight,
+            figure_facecolor=out_facecolor, dataset_renames=dataset_renames)
+    except mc_render.RenderError as exc:
+        st.error(t("再現スクリプトを生成できません: {exc}", exc=_error_text(exc)))
+        st.stop()
     st.download_button(t("スクリプトをダウンロード"), data=script,
                        file_name=os.path.splitext(out_name)[0] + ".py",
                        mime="text/x-python")

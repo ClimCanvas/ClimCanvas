@@ -59,9 +59,11 @@ panel["layers"] 内の位置 (heatmap のようにレイヤーを持たない pl
 
 from __future__ import annotations
 
-from .dataset import detect_coord_roles, is_curvilinear
-from .render import (averaging_slice, effective_averages, layer_averaging_stats,
-                     line_uses_secondary_axis, maskout_var_config, vector_v_dataset_id)
+from .dataset import detect_coord_roles, horizontal_dims, is_curvilinear
+from .render import (RenderError, averaging_slice, effective_averages, grid_spacing_km,
+                     layer_averaging_stats, line_uses_secondary_axis, maskout_var_config,
+                     section_path_length_km, section_path_spec, section_terrain_spec,
+                     section_x_lonlat, terrain_enabled, vector_v_dataset_id)
 
 # 加算 (value_offset) を持たない種別 (両成分に同じ倍率だけ掛ける)
 _SCALE_ONLY_KINDS = ("vector", "stream")
@@ -392,11 +394,106 @@ def _average_entries(panel: dict, layer: dict, base: dict, datasets: dict) -> li
 def _attach_units(notes: list[dict], datasets: dict) -> None:
     """各項目の variables に units 属性を添える ({変数名: units | None})。"""
     for note in notes:
+        if note.get("units") is not None:
+            continue            # 項目側で付けた units (別データセットの変数を含む地形マスク)
         ds = datasets.get(note.get("dataset_id"))
         note["units"] = {
             v: (str(ds[v].attrs.get("units")) if ds is not None and v in ds
                 and ds[v].attrs.get("units") not in (None, "") else None)
             for v in note.get("variables") or []}
+
+
+def _section_entries(panel: dict, base: dict, datasets: dict) -> list[dict]:
+    """鉛直断面の経路の注記 (docs/section_extension_guide.md)。
+
+    - ``section_path``: 経路断面 (等緯度線・等経度線・大円)。点数・経路長・格子間隔
+      (render と同じ関数で計算)。内挿は値を作る処理なので必ず出す
+    - ``section_grid_line``: 2 次元座標格子の格子線断面。固定した行・列と、その行・列に
+      沿った緯度・経度の範囲 (格子が緯線・経線からずれていることに気づけるように)
+    - ``section_vector_components``: 大円断面・格子線断面のベクトル・流線は、成分を
+      選んだ変数のまま描く (断面方向への射影はしない)
+    パネル単位の項目は layer_index None、レイヤー単位 (ベクトル) はそのレイヤー。
+    """
+    if panel.get("plot_type") != "section_2d":
+        return []
+    layers = panel.get("layers") or []
+    if not layers:
+        return []
+    ds = datasets.get(layers[0].get("dataset_id"))
+    if ds is None:
+        return []
+    pbase = {**base, "layer_index": None, "kind": None, "dataset_id": None, "variables": []}
+    out: list[dict] = []
+    spec = panel.get("section_path")
+    grid_line = False
+    if spec:
+        try:
+            full = section_path_spec(spec, ds)
+            length = section_path_length_km(full)
+        except RenderError:
+            return []          # 描画側で同じエラーになるので注記は出さない
+        kind = full["kind"]
+        if kind == "parallel":
+            lat_ref = float(full["lat"])
+        elif kind == "meridian":
+            lat_ref = float(sum(full["lat_range"]) / 2)
+        else:
+            lat_ref = float((full["start"][1] + full["end"][1]) / 2)
+        out.append({**pbase, "type": "section_path", "path_kind": kind, "spec": full,
+                    "npoints": int(full["npoints"]), "length_km": float(length),
+                    "spacing_km": float(grid_spacing_km(ds, detect_coord_roles(ds), lat_ref))})
+    else:
+        roles = detect_coord_roles(ds)
+        hd = horizontal_dims(ds, roles) if is_curvilinear(ds, roles) else None
+        if hd and panel.get("x_dim") in hd:
+            grid_line = True
+            other = hd[1] if panel["x_dim"] == hd[0] else hd[0]
+            selection = {**(panel.get("selection") or {}), **(layers[0].get("selection") or {})}
+            ref = section_x_lonlat(panel, datasets)
+            if ref is not None and other in selection:
+                _x, lon, lat = ref
+                out.append({**pbase, "type": "section_grid_line", "x_dim": panel["x_dim"],
+                            "fixed_dim": other, "fixed_value": selection[other],
+                            "lon_range": [float(_np_min(lon)), float(_np_max(lon))],
+                            "lat_range": [float(_np_min(lat)), float(_np_max(lat))]})
+    if (spec and spec.get("kind") == "great_circle") or grid_line:
+        for j, layer in enumerate(layers):
+            if layer.get("kind") in ("vector", "stream"):
+                out.append({**base, "layer_index": j, "kind": layer["kind"],
+                            "dataset_id": layer.get("dataset_id"),
+                            "type": "section_vector_components",
+                            "variables": [layer.get("u_variable"), layer.get("v_variable")]})
+    # 地形マスク: 地下はデータの値のまま描いて地面で覆う (覆うだけで欠損にはしない)。
+    # 色の範囲が自動 (vmin / vmax 未指定) の塗りがあれば、地下の値も範囲に入ることを添える
+    if terrain_enabled(panel):
+        try:
+            tspec = section_terrain_spec(panel, datasets)
+        except RenderError:
+            tspec = None
+        if tspec is not None:
+            variables = [tspec["var"]] + ([tspec["hvar"]] if tspec["hvar"] else [])
+            units = {tspec["var"]: _units_of(datasets.get(tspec["dsid"]), tspec["var"])}
+            if tspec["hvar"]:
+                units[tspec["hvar"]] = _units_of(datasets.get(tspec["hdsid"]), tspec["hvar"])
+            auto_range = any(
+                lay.get("kind") == "fill"
+                and ((lay.get("style") or {}).get("vmin") is None
+                     or (lay.get("style") or {}).get("vmax") is None)
+                for lay in layers)
+            out.append({**pbase, "type": "terrain_mask", "method": tspec["method"],
+                        "variables": variables, "dataset_id": tspec["dsid"], "units": units,
+                        "auto_color_range": bool(auto_range)})
+    return out
+
+
+def _np_min(a):
+    import numpy as np
+    return np.nanmin(np.asarray(a, dtype=float))
+
+
+def _np_max(a):
+    import numpy as np
+    return np.nanmax(np.asarray(a, dtype=float))
 
 
 def collect_notes(figure_config: dict, datasets: dict) -> list[dict]:
@@ -424,5 +521,6 @@ def collect_notes(figure_config: dict, datasets: dict) -> list[dict]:
             notes.extend(_error_entries(panel, layer, lbase, datasets))
             notes.extend(_average_entries(panel, layer, lbase, datasets))
         notes.extend(_line_axis_entries(panel, base, datasets))
+        notes.extend(_section_entries(panel, base, datasets))
     _attach_units(notes, datasets)
     return notes

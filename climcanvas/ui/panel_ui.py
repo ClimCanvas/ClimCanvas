@@ -772,9 +772,20 @@ def selection_widgets(ds, roles, used_vars, keep_dims, mode_key,
     return selection, time_label_settings
 
 
-def axis_settings_ui(ds, roles, x_dim, y_dim, mode_key, header_label="軸・ラベル"):
-    """断面図の軸設定 (反転・対数・ラベル・目盛)。header_label は原文のまま渡す。"""
+def axis_settings_ui(ds, roles, x_dim, y_dim, mode_key, header_label="軸・ラベル",
+                     x_label_default=None, x_is_lon=None, x_key=None):
+    """断面図の軸設定 (反転・対数・ラベル・目盛)。header_label は原文のまま渡す。
+
+    x_dim がデータの次元でない経路断面 (render.SECTION_PATH_DIM) では、x 軸ラベルの
+    既定値 x_label_default と、x 軸が経度か (東経・西経表記を出すか) x_is_lon、
+    widget key に使う x 軸の識別子 x_key (既定 = x_dim。経路の種類ごとに変えて、
+    ラベルの既定値が別の向きの入力値に引きずられないようにする) を渡す。
+    """
     section_header(t(header_label))
+    if x_is_lon is None:
+        x_is_lon = (x_dim == roles.get("lon"))
+    if x_key is None:
+        x_key = x_dim
     axis = mc_config.default_section_panel()["axis"]
     # 「時間軸」の扱いは datetime64 のときだけ (cftime 由来の数値時間軸では
     # strftime 書式を隠し、目盛位置の手動指定を解禁する)
@@ -787,7 +798,7 @@ def axis_settings_ui(ds, roles, x_dim, y_dim, mode_key, header_label="軸・ラ�
                      or y_attrs.get("positive") == "down")
     with st.expander(t("軸"), expanded=False):
         axis["invert_x"] = st.checkbox(t("横軸を反転"), value=False,
-                                       key=f"invx_{mode_key}_{x_dim}")
+                                       key=f"invx_{mode_key}_{x_key}")
         # 気圧軸は上が低圧、Hovmöller図は時間が下向きになるよう、デフォルトで反転
         axis["invert_y"] = st.checkbox(t("縦軸を反転"),
                                        value=bool(pressure_like or y_role_time),
@@ -798,10 +809,10 @@ def axis_settings_ui(ds, roles, x_dim, y_dim, mode_key, header_label="軸・ラ�
         if not y_is_time:
             axis["log_y"] = st.checkbox(t("縦軸を対数軸にする"), value=False,
                                         key=f"logy_{mode_key}_{y_dim}")
-        if x_dim == roles.get("lon"):
+        if x_is_lon:
             axis["x_lon_east_west"] = st.checkbox(
                 t("x軸 (経度) を東経・西経表記にする"), value=False,
-                key=f"lonew_{mode_key}_{x_dim}",
+                key=f"lonew_{mode_key}_{x_key}",
                 help=t("180° を中心に 120°E … 180° … 120°W のように表示する。"
                      "off では数値 (度、東経 0–360) のまま。「目盛」で"
                      "カスタムラベルを指定した場合はそちらが優先される"))
@@ -810,8 +821,10 @@ def axis_settings_ui(ds, roles, x_dim, y_dim, mode_key, header_label="軸・ラ�
                                                            f"tfmt_{mode_key}")
     with st.expander(t("ラベル"), expanded=False):
         axis["x_label"] = st.text_input(t("x軸ラベル"),
-                                        value=coord_label(ds, roles, x_dim),
-                                        key=f"xlab_{mode_key}_{x_dim}") or None
+                                        value=(coord_label(ds, roles, x_dim)
+                                               if x_label_default is None
+                                               else x_label_default),
+                                        key=f"xlab_{mode_key}_{x_key}") or None
         axis["y_label"] = st.text_input(t("y軸ラベル"),
                                         value=coord_label(ds, roles, y_dim),
                                         key=f"ylab_{mode_key}_{y_dim}") or None

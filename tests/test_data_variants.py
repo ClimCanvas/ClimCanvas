@@ -274,10 +274,51 @@ def _curvilinear_no_region_cfg():
     return cfg
 
 
+def _path_vsec_cfg(section_path, y_dim="level", ticks=True):
+    """経路断面 (docs/section_extension_guide.md)。x_dim は合成次元 "path"。"""
+    panel = mc_config.default_section_panel()
+    panel["x_dim"], panel["y_dim"] = mc_render.SECTION_PATH_DIM, y_dim
+    panel["section_path"] = section_path
+    panel["selection"] = {"time": "2024-01-01T06:00:00"}
+    panel["axis"].update({"invert_y": True, "x_lonlat_ticks": ticks})
+    fill = mc_config.default_fill_layer("ds0", "t")
+    cont = mc_config.default_contour_layer("ds0", "z")
+    panel["layers"] = [fill, cont]
+    panel["title"] = f"vsec {section_path['kind']}"
+    return _wrap(panel)
+
+
+def _grid_row_vsec_cfg():
+    """2 次元座標格子の格子線断面 (行 y = 20 に沿う、目盛に経緯度を併記)。"""
+    panel = mc_config.default_section_panel()
+    panel["x_dim"], panel["y_dim"] = "x", "level"
+    panel["selection"] = {"time": "2024-01-01T06:00:00", "y": 20.0}
+    panel["axis"].update({"invert_y": True, "x_lonlat_ticks": True})
+    panel["layers"] = [mc_config.default_fill_layer("ds0", "t")]
+    return _wrap(panel)
+
+
+_GC_WARPED = {"kind": "great_circle", "start": [80.0, 0.0], "end": [180.0, 50.0], "npoints": 60}
+_GC_DATELINE = {"kind": "great_circle", "start": [150.0, 20.0], "end": [-150.0, 50.0],
+                "npoints": 40}
+
 _CASES = [
     # curvilinear: lat/lon が 2 次元の補助座標 (dim は y/x)。region は isel の外接矩形
     ("curvilinear", "map", _curvilinear_map_cfg),
     ("curvilinear", "map-no-region", _curvilinear_no_region_cfg),
+    # 経路断面: 投影に当てはまらない歪んだ 2 次元格子でも、経緯度だけから格子番号を逆算して
+    # 大円 / 等緯度線に沿って内挿できる。格子線断面 (行に沿う) も
+    ("curvilinear", "vsec-great-circle", lambda: _path_vsec_cfg(_GC_WARPED)),
+    ("curvilinear", "vsec-parallel", lambda: _path_vsec_cfg(
+        {"kind": "parallel", "lat": 30.0, "lon_range": [70.0, 190.0], "npoints": None},
+        ticks=False)),
+    ("curvilinear", "vsec-grid-row", _grid_row_vsec_cfg),
+    # 1 次元格子の変種で経路断面: 降順の緯度、-180 規約 (日付変更線をまたぐ大円)、Pa の気圧面
+    ("desc-lat", "vsec-great-circle", lambda: _path_vsec_cfg(_GC_WARPED)),
+    ("lon-180", "vsec-great-circle-dateline", lambda: _path_vsec_cfg(_GC_DATELINE)),
+    ("pa-level", "vsec-meridian", lambda: _path_vsec_cfg(
+        {"kind": "meridian", "lon": 140.0, "lat_range": [-30.0, 60.0], "npoints": None},
+        ticks=False)),
     ("desc-lat", "map", lambda: _map_cfg()),
     ("desc-lat", "vsec-lat", lambda: _vsec_cfg("lat", {"lon": 140.0})),
     ("desc-lat", "hovmoller", _hovmoller_cfg),
@@ -364,12 +405,15 @@ def test_variant_renders_and_scripts(variant, mode, builder,
 
 @pytest.mark.parametrize("variant,builder", [
     ("curvilinear", _curvilinear_map_cfg),
+    ("curvilinear", lambda: _path_vsec_cfg(_GC_WARPED)),
+    ("lon-180", lambda: _path_vsec_cfg(_GC_DATELINE)),
     ("desc-lat", _map_cfg),
     ("cftime-noleap", _line_time_cfg),
     ("cftime-360day", _line_time_cfg),
     ("cftime-year0", _line_time_cfg),
     ("timedelta-lag", _lag_map_cfg),
-], ids=["curvilinear-map", "desc-lat-map", "cftime-line", "cftime-360day-line",
+], ids=["curvilinear-map", "curvilinear-vsec-great-circle", "lon-180-vsec-great-circle",
+        "desc-lat-map", "cftime-line", "cftime-360day-line",
         "cftime-year0-line", "timedelta-lag-map"])
 def test_variant_pixel_match(variant, builder, variant_paths, tmp_path):
     """代表変種でアプリ描画と生成スクリプトのピクセル一致 (ルール1) も確認。

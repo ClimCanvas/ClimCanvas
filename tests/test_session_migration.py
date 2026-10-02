@@ -11,7 +11,7 @@ WIP/プリセット JSON は selectbox/radio の表示ラベルをそのまま�
 
 import pytest
 
-from climcanvas.ui.state_io import _migrate_legacy_value
+from climcanvas.ui.state_io import _migrate_legacy_value, _migrate_loaded_session
 
 
 @pytest.mark.parametrize("key,old,new", [
@@ -68,3 +68,23 @@ def test_non_string_values_pass_through():
     assert _migrate_legacy_value("xtmode_line0", None) is None
     assert _migrate_legacy_value("vsec_range_vsec0", (1000.0, 200.0)) \
         == (1000.0, 200.0)
+
+
+def test_old_session_keeps_manual_central_longitude():
+    """「中心経度を範囲の中央に合わせる」(clon_follow_*、2026-10-02 追加、既定 ON) が無い
+    旧セッションで Robinson / EqualEarth の中心経度を保存していれば、追従 OFF を補って
+    保存時の中心経度のまま描く (既定の ON を適用すると図が変わる)。
+    """
+    old = {"central_lon_map0_Robinson": 120.0, "central_lon_map1_EqualEarth": 10.0,
+           "central_lon_map0_NorthPolarStereo": 90.0,       # 対象外 (追従の選択肢が無い)
+           "reg_lonmin_map0_Robinson": 100.0, "title_map0": "x"}
+    out = _migrate_loaded_session(old)
+    assert out["clon_follow_map0_Robinson"] is False
+    assert out["clon_follow_map1_EqualEarth"] is False
+    assert "clon_follow_map0_NorthPolarStereo" not in out
+    assert all(out[k] == v for k, v in old.items())      # 元の値は変えない
+    assert old == {k: v for k, v in old.items()}          # 入力の辞書は書き換えない
+
+    # 追従キーを持つ新しいセッションはそのまま
+    new = {"central_lon_map0_Robinson": 120.0, "clon_follow_map0_Robinson": True}
+    assert _migrate_loaded_session(new) == new

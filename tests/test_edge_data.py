@@ -28,6 +28,7 @@ import pytest
 import xarray as xr
 
 from climcanvas.core import config as mc_config
+from climcanvas.core import dataset as mc_dataset
 from climcanvas.core import render as mc_render
 
 
@@ -195,3 +196,107 @@ def test_curvilinear_single_row_region_pads_to_two_rows():
     ds = _curvi_ds(lon2d, lat2d)
     _render_curvi(ds, {"lon_min": 100.0, "lon_max": 160.0, "lat_min": 24.0, "lat_max": 26.0},
                   clon=130.0)
+
+
+# --- 経路断面 (section_path) の異常系 ---
+
+def _path_section_cfg(section_path, x_dim=None):
+    panel = mc_config.default_section_panel()
+    panel["x_dim"] = x_dim or mc_render.SECTION_PATH_DIM
+    panel["y_dim"] = "lev"
+    panel["section_path"] = section_path
+    panel["selection"] = {"time": "2024-01-01T06:00:00"}
+    panel["layers"] = [mc_config.default_fill_layer("ds0", "t")]
+    cfg = mc_config.default_figure_config()
+    cfg["panels"] = [panel]
+    return cfg
+
+
+def test_section_path_entirely_outside_grid_raises_clear_error(curvilinear_sample_path):
+    ds = mc_dataset.open_dataset(curvilinear_sample_path)
+    cfg = _path_section_cfg({"kind": "parallel", "lat": -30.0,
+                             "lon_range": [10.0, 40.0], "npoints": None})
+    with pytest.raises(mc_render.RenderError) as ei:
+        mc_render.render_figure(cfg, {"ds0": ds})
+    assert ei.value.msg_id == "section_path_outside_grid"
+    assert "outside the data grid" in str(ei.value)
+
+
+def test_section_path_partly_outside_grid_renders_with_nan(curvilinear_sample_path):
+    """経路の一部だけ格子の外: 外の点は欠損のまま描ける (エラーにしない)。"""
+    ds = mc_dataset.open_dataset(curvilinear_sample_path)
+    path = {"kind": "parallel", "lat": 35.0, "lon_range": [90.0, 150.0], "npoints": 61}
+    da = mc_render.select_section_data(ds, "t", {"time": "2024-01-01T06:00:00"}, None,
+                                       mc_render.SECTION_PATH_DIM, "lev", path=path)
+    nan_cols = np.isnan(da.values).all(axis=0)
+    assert nan_cols[0] and not nan_cols[-1] and 0 < nan_cols.sum() < 61
+    fig = mc_render.render_figure(_path_section_cfg(path), {"ds0": ds})
+    assert fig.axes
+
+
+def test_section_path_bad_specs_raise_clear_errors(curvilinear_sample_path):
+    ds = mc_dataset.open_dataset(curvilinear_sample_path)
+    cases = [
+        ({"kind": "great_circle", "start": [0.0, 0.0], "end": [180.0, 0.0],
+          "npoints": 10}, "section_path_antipodal"),
+        ({"kind": "spiral", "npoints": 10}, "section_path_unknown_kind"),
+    ]
+    for path, msg_id in cases:
+        with pytest.raises(mc_render.RenderError) as ei:
+            mc_render.render_figure(_path_section_cfg(path), {"ds0": ds})
+        assert ei.value.msg_id == msg_id, path
+    # 予約名 "path" が既にデータの次元にある
+    ds2 = ds.rename({"x": "path"})
+    with pytest.raises(mc_render.RenderError) as ei:
+        mc_render.render_figure(
+            _path_section_cfg({"kind": "meridian", "lon": 140.0, "lat_range": [25.0, 45.0],
+                               "npoints": 10}), {"ds0": ds2})
+    assert ei.value.msg_id == "section_path_dim_conflict"
+    # 経緯度が無いデータ (座標ファイル未結合の ClimCORE 形式)
+    ds3 = ds.drop_vars(["lon", "lat"])
+    with pytest.raises(mc_render.RenderError) as ei:
+        mc_render.render_figure(
+            _path_section_cfg({"kind": "meridian", "lon": 140.0, "lat_range": [25.0, 45.0],
+                               "npoints": 10}), {"ds0": ds3})
+    assert ei.value.msg_id == "section_path_no_lonlat"
+
+
+def test_terrain_with_nan_surface_values_renders(curvilinear_sample_path, curvilinear_terrain_path,
+                                                 tmp_path):
+    """地表の変数に欠損があっても (海洋モデルの陸など)、地面の線が欠損の列は描かずに
+    残りを描ける。地面の線は欠損を含む (fill_between が途切れる)。"""
+    ter = mc_dataset.open_dataset(curvilinear_terrain_path)
+    ps = ter["ps"].values.copy()
+    ps[20:30, :] = np.nan                       # 行 20〜29 の地上気圧が欠損
+    ter2 = ter.assign(ps=(("y", "x"), ps, dict(ter["ps"].attrs)))
+    p_ter = str(tmp_path / "terrain_nan.nc")
+    ter2.to_netcdf(p_ter)
+    ter.close()
+    datasets = {"ds0": mc_dataset.open_dataset(curvilinear_sample_path),
+                "ds1": mc_dataset.open_dataset(p_ter)}
+    cfg = _path_section_cfg({"kind": "meridian", "lon": 140.0, "lat_range": [22.0, 48.0],
+                             "npoints": 40})
+    panel = cfg["panels"][0]
+    panel["terrain"] = {**mc_config.default_section_panel()["terrain"], "show": True,
+                        "method": "surface_pressure", "dataset_id": "ds1", "variable": "ps"}
+    x, ground, pressure_like = mc_render.section_terrain_ground(panel, datasets)
+    assert np.isnan(ground).any() and np.isfinite(ground).any()
+    fig = mc_render.render_figure(cfg, datasets)
+    assert fig.axes
+
+
+def test_section_path_on_warped_grid_boundary(curvilinear_sample_path):
+    """格子の縁をかすめる経路: 縁の外の点だけ欠損になり、中の点は値を持つ (縁の格子点
+    ちょうどは中として扱う)。"""
+    ds = mc_dataset.open_dataset(curvilinear_sample_path)
+    lon2d, lat2d = ds["lon"].values, ds["lat"].values
+    # 南端の行 (y = 1) の格子点そのものを通り、その先で格子の外に出る等緯度線
+    lat0 = float(lat2d[0, 25])
+    path = {"kind": "parallel", "lat": lat0, "lon_range": [float(lon2d[0, 25]) - 30.0,
+                                                          float(lon2d[0, 25]) + 30.0],
+            "npoints": 121}
+    da = mc_render.select_section_data(ds, "t", {"time": "2024-01-01T06:00:00"}, None,
+                                       mc_render.SECTION_PATH_DIM, "lev", path=path)
+    vals = da.values
+    assert np.isfinite(vals[:, 60]).all()          # 格子点ちょうど (経路の中央)
+    assert np.isnan(vals).any(axis=0).sum() > 0    # 南の縁より外に出た点は欠損

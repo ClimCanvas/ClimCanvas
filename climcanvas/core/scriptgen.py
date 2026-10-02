@@ -118,6 +118,22 @@ from .render import (
     subplots_adjust_kwargs,
     select_panel_data,
     select_section_data,
+    section_path_spec,
+    section_path_grid,
+    section_x_lonlat,
+    section_overlay_items,
+    section_overlay_kwargs,
+    section_overlay_label_specs,
+    section_terrain_spec,
+    terrain_enabled,
+    TERRAIN_ZORDER,
+    ground_pressure_from_height,
+    draw_section_terrain,
+    great_circle_points,
+    grid_fractional_indices,
+    grid_fractional_indices_1d,
+    sample_bilinear,
+    lonlat_tick_label,
     text_annotation_kwargs,
     use_circular_boundary,
     vector_kwargs,
@@ -184,6 +200,12 @@ def _assemble_script(gen: "_ScriptBuilder", figure_config: dict,
                    if gen.needs_inversion_guard else [])
     guard_lines += ([inspect.getsource(align_twin_ylim), ""]
                     if gen.needs_twin_align else [])
+    # 経路断面の関数群も render の本体をそのまま埋め込む (1 対 1、numpy / xarray だけで動く)
+    for fn in (great_circle_points, grid_fractional_indices, grid_fractional_indices_1d,
+               sample_bilinear, lonlat_tick_label, ground_pressure_from_height,
+               draw_section_terrain):
+        if fn.__name__ in gen.section_path_funcs:
+            guard_lines += [inspect.getsource(fn), ""]
 
     header = script_header(header_kind)
     return "\n".join(
@@ -276,7 +298,7 @@ def _emit_panels(gen: "_ScriptBuilder", figure_config: dict, datasets: dict) -> 
             gen.body.append("")
             gen.body.append(f"# === Panel {i + 1} ===")
         if panel["plot_type"] == "horizontal_map":
-            gen.map_panel(panel, datasets)
+            gen.map_panel(panel, datasets, figure_config)
         elif panel["plot_type"] == "section_2d":
             gen.section_panel(panel, datasets)
         elif panel["plot_type"] == "line_1d":
@@ -777,6 +799,12 @@ class _ScriptBuilder:
         # 第2軸との値揃え (render.align_twin_ylim) を使うスクリプトか。
         # True なら関数本体を冒頭に埋め込む
         self.needs_twin_align = False
+        # 経路断面 (render の great_circle_points / grid_fractional_indices /
+        # grid_fractional_indices_1d / sample_bilinear / lonlat_tick_label) のうち
+        # 使う関数の名前。冒頭に本体を埋め込む (docs/section_extension_guide.md 3.5)
+        self.section_path_funcs: set[str] = set()
+        # 現在の断面パネルで既に出した経路の変数名 (section_panel が毎回リセット)
+        self._path_vars: dict = {}
         # add_subplot の位置引数。複数パネルでは呼び出し側がパネル毎に設定する
         # add_subplot の位置引数。第3要素はセル番号 (int) または
         # 結合セルの (左上, 右下) タプル (render.parse_mosaic 参照)
@@ -982,7 +1010,7 @@ class _ScriptBuilder:
 
     # --- 水平断面図 (horizontal_map) ---
 
-    def map_panel(self, panel: dict, datasets: dict):
+    def map_panel(self, panel: dict, datasets: dict, figure_config: dict | None = None):
         body = self.body
         self.needs_ccrs = True
         body.append(f"ax = fig.add_subplot({self._subplot_args()}, "
@@ -1292,6 +1320,22 @@ class _ScriptBuilder:
                 f"linestyle={box.get('linestyle', 'solid')!r}, "
                 f"transform=ccrs.PlateCarree())",
             ]
+
+        # 同じ図の鉛直断面パネルの経路 (render._render_horizontal_map と 1 対 1)。
+        # 参照先の検査 (無い / 断面でない) は render と同じ section_overlay_items で行う
+        for item, s_lon, s_lat in section_overlay_items(panel, figure_config, datasets):
+            target = next(p for p in figure_config["panels"]
+                          if p.get("panel_id") == item.get("panel_id"))
+            lon_v, lat_v = self._section_overlay_lines(target, datasets)
+            kw = ", ".join(f"{k}={v!r}" for k, v in section_overlay_kwargs(item).items())
+            body.append(f"ax.plot({lon_v}, {lat_v}, transform=ccrs.PlateCarree(), zorder=2, {kw})")
+            for lx, ly, text, ha in section_overlay_label_specs(item, s_lon, s_lat):
+                idx = "0" if (lx, ly) == (float(s_lon[0]), float(s_lat[0])) else "-1"
+                body.append(
+                    f"ax.text({lon_v}[{idx}], {lat_v}[{idx}], {text!r}, "
+                    f"transform=ccrs.PlateCarree(), ha={ha!r}, va='center', "
+                    f"fontsize={float(item.get('label_fontsize', 10))!r}, "
+                    f"color={(item.get('color') or 'black')!r}, zorder=3)")
 
         if map_cfg.get("frame_width") is not None:
             body.append(f"ax.spines['geo'].set_linewidth({float(map_cfg['frame_width'])!r})")
@@ -1689,9 +1733,9 @@ class _ScriptBuilder:
         self.body += _wrap_hatch_rc(hatch_lines, style)
 
     def _contour_call_lines(self, cs: str, da: str, xname: str, yname: str,
-                            style: dict, tail: list[str]) -> None:
+                            style: dict, tail: list[str], label_zorder=None) -> None:
         """等値線の呼び出し + 負値線種・強調・ラベルの行。render._contour_artist と1対1対応
-        (カラーバーは呼び出し側)。"""
+        (カラーバーは呼び出し側)。label_zorder は地形マスクのある断面のラベルの zorder。"""
         kwargs_lines = _fmt_kwargs_lines(contour_kwargs(style))
         lv_expr = self._contour_levels_expr(style)
         if lv_expr:
@@ -1711,9 +1755,14 @@ class _ScriptBuilder:
         if labels_cfg.get("show"):
             lbl_lines, lbl_arg = _contour_label_levels_lines(cs, style)
             self.body += lbl_lines
-            self.body.append(f"ax.clabel({cs}, {lbl_arg}"
-                             f"fontsize={labels_cfg.get('fontsize', 8)!r}, "
-                             f"fmt={labels_cfg.get('fmt', '%g')!r})")
+            call = (f"ax.clabel({cs}, {lbl_arg}"
+                    f"fontsize={labels_cfg.get('fontsize', 8)!r}, "
+                    f"fmt={labels_cfg.get('fmt', '%g')!r})")
+            if label_zorder is None:
+                self.body.append(call)
+            else:
+                self.body.append(f"for _t in {call}:")
+                self.body.append(f"    _t.set_zorder({label_zorder!r})")
 
     def _vector_prep_lines(self, u: str, v: str, style: dict,
                            xname: str, yname: str) -> None:
@@ -1952,7 +2001,8 @@ class _ScriptBuilder:
                      **(layer.get("selection") or {})}
         da = select_section_data(ds, layer["u_variable"], selection,
                                  panel.get("ranges"), panel["x_dim"],
-                                 panel["y_dim"], averages=layer.get("averages"))
+                                 panel["y_dim"], averages=layer.get("averages"),
+                                 path=panel.get("section_path"))
         for dim in (panel["x_dim"], panel["y_dim"]):
             uni = stream_uniform_coords(da[dim].values)
             if uni is not None:
@@ -2438,6 +2488,7 @@ class _ScriptBuilder:
 
     def section_panel(self, panel: dict, datasets: dict):
         body = self.body
+        self._path_vars = {}
         body.append(f"ax = fig.add_subplot({self._subplot_args()})")
         self._emit_box_aspect(panel)
         body.append("")
@@ -2466,6 +2517,10 @@ class _ScriptBuilder:
         self._tick_settings_lines(axis_cfg)
         self._invert_limit_lines(axis_cfg, limits=False)
 
+        # 地形マスク (render.section_terrain_ground / draw_section_terrain と 1 対 1)
+        if terrain_enabled(panel):
+            self._terrain_lines(panel, datasets)
+
         # 経度軸の東経・西経表記 (render._lon_ew_label と1対1対応)。
         # カスタム目盛ラベル指定時はそちらを優先する
         if axis_cfg.get("x_lon_east_west") and not axis_cfg.get("x_tick_labels"):
@@ -2481,6 +2536,19 @@ class _ScriptBuilder:
             body.append("    return f\"{abs(lon):g}°{'E' if lon > 0 else 'W'}\"")
             body.append("ax.xaxis.set_major_formatter("
                         "mticker.FuncFormatter(_lon_ew_label))")
+        # 目盛に経緯度を併記 (render._render_section_2d / section_x_lonlat と 1 対 1)
+        if (axis_cfg.get("x_lonlat_ticks") and not axis_cfg.get("x_tick_labels")
+                and section_x_lonlat(panel, datasets) is not None):
+            self.needs_mticker = True
+            self.needs_numpy = True          # lonlat_tick_label が np を使う
+            self.section_path_funcs.add("lonlat_tick_label")
+            xv, lonv, latv = self._section_x_lonlat_vars(panel, datasets)
+            if not (axis_cfg.get("x_tick_positions") or axis_cfg.get("x_tick_interval")):
+                body.append("_w_in = ax.get_position().width * fig.get_figwidth()")
+                body.append("ax.xaxis.set_major_locator("
+                            "mticker.MaxNLocator(nbins=int(np.clip(_w_in / 1.0, 3, 6))))")
+            body.append("ax.xaxis.set_major_formatter(mticker.FuncFormatter("
+                        f"lambda v, pos=None: lonlat_tick_label(v, {xv}, {lonv}, {latv})))")
 
         fmt = axis_cfg.get("time_axis_format")
         if fmt and panel.get("layers"):
@@ -3639,11 +3707,200 @@ class _ScriptBuilder:
         averages = layer.get("averages") or {}
         self._emit_averages_lines(name, averages, ds, variable)
 
+        # 経路断面: 平均の後・ranges の前に経路上へ双一次内挿
+        # (render.select_section_data / sample_section_path と 1 対 1)
+        if panel.get("section_path"):
+            pv = self._section_path_vars(panel, ds, dsid)
+            dim = panel["x_dim"]
+            self.body.append(
+                f"{name} = sample_bilinear({name}, {pv['ydim']!r}, {pv['xdim']!r}, "
+                f"{pv['fj']}, {pv['fi']}, {dim!r}, wrap_x={pv['wrap']!r})")
+            self.body.append(
+                f"{name} = {name}.assign_coords({{{dim!r}: {pv['x']}, "
+                f"{dim + '_lon'!r}: ({dim!r}, {pv['lon']}), "
+                f"{dim + '_lat'!r}: ({dim!r}, {pv['lat']})}})")
+
         for dim, bounds in (panel.get("ranges") or {}).items():
             if dim in ds[variable].dims and dim not in averages:
                 sl = coord_slice(ds[dim], bounds[0], bounds[1])
                 self.body.append(f"{name} = {name}.sel({dim}=slice({sl.start!r}, {sl.stop!r}))")
         self.body.append(f"{name} = {name}.transpose({panel['y_dim']!r}, {panel['x_dim']!r})")
+
+    def _section_path_vars(self, panel: dict, ds, dsid: str) -> dict:
+        """経路断面の点 (パネルごとに 1 回) と格子番号 (パネル × dataset ごとに 1 回) の
+        行を出し、変数名を返す。render.section_path_points / section_path_indices と
+        1 対 1 (点数は render.section_path_spec で確定した値をリテラルで出す)。"""
+        self.needs_numpy = True
+        self.section_path_funcs.add("sample_bilinear")
+        pts = self._section_path_point_lines(panel, ds)
+        if dsid not in self._path_vars:
+            roles = detect_coord_roles(ds)
+            # render.section_path_indices と同じ判定 (2 次元 / 1 次元、wrap_x)
+            ydim, xdim, curvi = section_path_grid(ds)
+            wrap = not curvi
+            fj, fi = self._name("path_fj"), self._name("path_fi")
+            if curvi:
+                self.section_path_funcs.add("grid_fractional_indices")
+                self.body.append(
+                    f"{fj}, {fi} = grid_fractional_indices("
+                    f"{dsid}[{roles['lon']!r}].transpose({ydim!r}, {xdim!r}).values, "
+                    f"{dsid}[{roles['lat']!r}].transpose({ydim!r}, {xdim!r}).values, "
+                    f"{pts['lon']}, {pts['lat']})")
+            else:
+                self.section_path_funcs.add("grid_fractional_indices_1d")
+                self.body.append(
+                    f"{fj}, {fi} = grid_fractional_indices_1d("
+                    f"{dsid}[{roles['lon']!r}].values, {dsid}[{roles['lat']!r}].values, "
+                    f"{pts['lon']}, {pts['lat']})")
+            self._path_vars[dsid] = {"fj": fj, "fi": fi, "ydim": ydim, "xdim": xdim,
+                                     "wrap": wrap}
+        return {**pts, **self._path_vars[dsid]}
+
+    def _terrain_profile_lines(self, name: str, panel: dict, datasets: dict, dsid: str,
+                               var: str, with_vertical: bool) -> None:
+        """render.section_terrain_profile と 1 対 1: 地形の変数を断面の位置で切り出す行。"""
+        ds = datasets[dsid]
+        layers = panel.get("layers") or []
+        first = (layers[0].get("selection") or {}) if layers else {}
+        selection = {**(panel.get("selection") or {}), **first}
+        if with_vertical:
+            layer = {"dataset_id": dsid, "selection": first}
+            self._section_data_lines(name, panel, layer, var, datasets)
+            return
+        sel = {d: v for d, v in selection.items() if d in ds[var].dims}
+        expr = f"{dsid}[{var!r}]"
+        if sel:
+            expr += ".sel(" + ", ".join(self._sel_arg(d, v) for d, v in sel.items()) + ")"
+        self.body.append(f"{name} = {expr}")
+        if panel.get("section_path"):
+            pv = self._section_path_vars(panel, ds, dsid)
+            dim = panel["x_dim"]
+            self.body.append(
+                f"{name} = sample_bilinear({name}, {pv['ydim']!r}, {pv['xdim']!r}, "
+                f"{pv['fj']}, {pv['fi']}, {dim!r}, wrap_x={pv['wrap']!r})")
+            self.body.append(
+                f"{name} = {name}.assign_coords({{{dim!r}: {pv['x']}, "
+                f"{dim + '_lon'!r}: ({dim!r}, {pv['lon']}), "
+                f"{dim + '_lat'!r}: ({dim!r}, {pv['lat']})}})")
+        for dim, bounds in (panel.get("ranges") or {}).items():
+            if dim in ds[var].dims:
+                sl = coord_slice(ds[dim], bounds[0], bounds[1])
+                self.body.append(f"{name} = {name}.sel({dim}=slice({sl.start!r}, {sl.stop!r}))")
+
+    def _terrain_lines(self, panel: dict, datasets: dict) -> None:
+        """地形マスク: 地面の線を求めて draw_section_terrain で塗る行
+        (render.section_terrain_ground と 1 対 1。倍率は section_terrain_spec で確定した値)。"""
+        spec = section_terrain_spec(panel, datasets)
+        self.needs_numpy = True
+        self.section_path_funcs.add("draw_section_terrain")
+        surf = self._name("terrain")
+        self._terrain_profile_lines(surf, panel, datasets, spec["dsid"], spec["var"], False)
+        x_dim = panel["x_dim"]
+        if spec["method"] == "height_field":
+            self.section_path_funcs.add("ground_pressure_from_height")
+            z = self._name("terrain_z")
+            self._terrain_profile_lines(z, panel, datasets, spec["hdsid"], spec["hvar"], True)
+            self.body.append(
+                f"{surf}_ground = ground_pressure_from_height("
+                f"{z}.values * {spec['hfactor']!r}, {z}[{panel['y_dim']!r}].values * "
+                f"{spec['lev_factor']!r}, {surf}.values * {spec['factor']!r})")
+        else:
+            self.body.append(f"{surf}_ground = {surf}.values * {spec['factor']!r}")
+        color = (panel.get("terrain") or {}).get("color") or "#808080"
+        self.body.append(
+            f"draw_section_terrain(ax, {surf}[{x_dim!r}].values, {surf}_ground, "
+            f"{spec['pressure_like']!r}, {color!r}, {TERRAIN_ZORDER!r})")
+
+    def _section_path_point_lines(self, panel: dict, ds) -> dict:
+        """経路の点 (lon / lat / 横軸の値) の行をパネルごとに 1 回出し、変数名を返す
+        (render.section_path_points と 1 対 1。点数は section_path_spec で確定した値)。"""
+        if "points" not in self._path_vars:
+            self.needs_numpy = True
+            spec = section_path_spec(panel["section_path"], ds)
+            n = spec["npoints"]
+            lon, lat, x = self._name("path_lon"), self._name("path_lat"), self._name("path_x")
+            kind = spec["kind"]
+            if kind == "parallel":
+                lo, hi = (float(v) for v in spec["lon_range"])
+                self.body.append(f"{lon} = np.linspace({lo!r}, {hi!r}, {n!r})")
+                self.body.append(f"{lat} = np.full({n!r}, {float(spec['lat'])!r})")
+                self.body.append(f"{x} = {lon}")
+            elif kind == "meridian":
+                lo, hi = (float(v) for v in spec["lat_range"])
+                self.body.append(f"{lat} = np.linspace({lo!r}, {hi!r}, {n!r})")
+                self.body.append(f"{lon} = np.full({n!r}, {float(spec['lon'])!r})")
+                self.body.append(f"{x} = {lat}")
+            else:
+                self.section_path_funcs.add("great_circle_points")
+                start = tuple(float(v) for v in spec["start"])
+                end = tuple(float(v) for v in spec["end"])
+                self.body.append(f"{lon}, {lat}, {x} = great_circle_points("
+                                 f"{start!r}, {end!r}, {n!r})")
+            self._path_vars["points"] = {"lon": lon, "lat": lat, "x": x}
+        return self._path_vars["points"]
+
+    def _section_overlay_lines(self, target: dict, datasets: dict) -> tuple[str, str]:
+        """地図に重ねる断面の経路の経緯度 (lon, lat) の行を出し、変数名を返す
+        (render.section_panel_lonlat と 1 対 1)。"""
+        layers = target["layers"]
+        dsid = layers[0]["dataset_id"]
+        ds = datasets[dsid]
+        if target.get("section_path"):
+            self._path_vars = {}          # 断面パネルとは別に、この地図パネル用に出す
+            pts = self._section_path_point_lines(target, ds)
+            return pts["lon"], pts["lat"]
+        roles = detect_coord_roles(ds)
+        x_dim = target["x_dim"]
+        selection = {**(target.get("selection") or {}), **(layers[0].get("selection") or {})}
+        ranges = target.get("ranges") or {}
+        lon_v, lat_v = self._name("sec_lon"), self._name("sec_lat")
+        self.needs_numpy = True
+        if is_curvilinear(ds, roles):
+            hd = horizontal_dims(ds, roles)
+            other = hd[1] if x_dim == hd[0] else hd[0]
+            sel = self._sel_arg(other, selection[other])
+            tail = ""
+            if x_dim in ranges and x_dim in ds.coords:
+                sl = coord_slice(ds[x_dim], ranges[x_dim][0], ranges[x_dim][1])
+                tail = f".sel({x_dim}=slice({sl.start!r}, {sl.stop!r}))"
+            for var, name in ((roles["lon"], lon_v), (roles["lat"], lat_v)):
+                self.body.append(f"{name} = {dsid}[{var!r}].sel({sel}).transpose({x_dim!r})"
+                                 f"{tail}.values.astype(float)")
+            return lon_v, lat_v
+        fixed = roles["lat"] if x_dim == roles["lon"] else roles["lon"]
+        expr = f"{dsid}[{x_dim!r}]"
+        if x_dim in ranges:
+            sl = coord_slice(ds[x_dim], ranges[x_dim][0], ranges[x_dim][1])
+            expr += f".sel({x_dim}=slice({sl.start!r}, {sl.stop!r}))"
+        along, const = (lon_v, lat_v) if x_dim == roles["lon"] else (lat_v, lon_v)
+        self.body.append(f"{along} = {expr}.values.astype(float)")
+        self.body.append(f"{const} = np.full({along}.size, {float(selection[fixed])!r})")
+        return lon_v, lat_v
+
+    def _section_x_lonlat_vars(self, panel: dict, datasets: dict) -> tuple[str, str, str]:
+        """目盛の経緯度併記に使う (横軸の値, 経度, 緯度) の変数名。経路断面は経路の
+        変数、格子線断面は先頭レイヤーの固定した行・列に沿った経緯度の行を出す
+        (render.section_x_lonlat と 1 対 1)。"""
+        if panel.get("section_path"):
+            pts = self._path_vars.get("points")
+            if pts is None:
+                ds = datasets[panel["layers"][0]["dataset_id"]]
+                pts = self._section_path_vars(panel, ds, panel["layers"][0]["dataset_id"])
+            return pts["x"], pts["lon"], pts["lat"]
+        layer = panel["layers"][0]
+        dsid = layer["dataset_id"]
+        ds = datasets[dsid]
+        roles = detect_coord_roles(ds)
+        hdims = horizontal_dims(ds, roles)
+        x_dim = panel["x_dim"]
+        other = hdims[1] if x_dim == hdims[0] else hdims[0]
+        selection = {**(panel.get("selection") or {}), **(layer.get("selection") or {})}
+        xv, lonv, latv = self._name("xl_x"), self._name("xl_lon"), self._name("xl_lat")
+        sel = self._sel_arg(other, selection[other])
+        self.body.append(f"{xv} = {dsid}[{x_dim!r}].values.astype(float)")
+        self.body.append(f"{lonv} = {dsid}[{roles['lon']!r}].sel({sel}).transpose({x_dim!r}).values")
+        self.body.append(f"{latv} = {dsid}[{roles['lat']!r}].sel({sel}).transpose({x_dim!r}).values")
+        return xv, lonv, latv
 
     def _emit_averages_lines(self, name: str, averages: dict, ds, variable: str):
         """layer.averages を `.sel(...).mean(...)` の行に展開する共通ヘルパ。
@@ -3716,7 +3973,9 @@ class _ScriptBuilder:
         self._section_data_lines(da, panel, layer, layer["variable"], datasets)
         style = layer["style"]
         self._transform_and_mask_lines(da, panel, layer, datasets, section=True)
-        self._contour_call_lines(cs, da, panel["x_dim"], panel["y_dim"], style, [])
+        self._contour_call_lines(
+            cs, da, panel["x_dim"], panel["y_dim"], style, [],
+            label_zorder=(TERRAIN_ZORDER - 0.1 if terrain_enabled(panel) else None))
         # colorbar キーは新スキーマのみが持つ (render._draw_contour_section と1対1対応)
         if style.get("use_cmap") and "colorbar" in style:
             self._colorbar_lines(cs, style.get("colorbar", {}))
@@ -3732,5 +3991,7 @@ class _ScriptBuilder:
         style = layer["style"]
         self._vector_prep_lines(u, v, style, panel["x_dim"], panel["y_dim"])
         norm_expr = self._quiver_lines(q, u, v, style, panel["x_dim"], panel["y_dim"], [])
-        self._finish_vector_lines(q, style, norm_expr, map_cbar=False)
+        self._finish_vector_lines(
+            q, style, norm_expr, map_cbar=False,
+            key_zorder=(TERRAIN_ZORDER + 0.1 if terrain_enabled(panel) else None))
         self.body.append("")

@@ -137,3 +137,75 @@ def test_generated_script_with_coord_files_is_standalone(curvilinear_bare_paths,
                             capture_output=True, text=True, env=env, cwd=tmp_path)
     assert result.returncode == 0, f"生成スクリプトの実行に失敗:\n{result.stderr}\n{script}"
     assert out_png.exists()
+
+
+def test_generated_script_with_section_path_is_standalone(curvilinear_bare_paths, tmp_path):
+    """経路断面 (大円 + 経緯度の目盛併記) の生成スクリプトが、埋め込んだ関数群
+    (great_circle_points / grid_fractional_indices / sample_bilinear / lonlat_tick_label)
+    込みで許可 import のみ・climcanvas 不在環境で実行できる (ルール2)。"""
+    from test_consistency import _curvilinear_section_great_circle_config
+    bare_path, lonlat_path = curvilinear_bare_paths
+    ds = mc_dataset.attach_coord_files(
+        mc_dataset.open_dataset(bare_path),
+        [(lonlat_path, mc_dataset.open_coord_file(lonlat_path))])
+    cfg = _curvilinear_section_great_circle_config()
+    out_png = tmp_path / "section_path.png"
+    script = mc_scriptgen.generate_script(
+        cfg, {"ds0": ds}, {"ds0": bare_path},
+        figure_output=str(out_png), figure_dpi=100, include_show=False)
+    extra = _import_roots(script) - _ALLOWED_ROOTS
+    assert not extra, f"許可外の import があります: {sorted(extra)}\n{script}"
+    for fn in ("def great_circle_points(", "def grid_fractional_indices(",
+               "def sample_bilinear(", "def lonlat_tick_label("):
+        assert fn in script, fn
+    assert "def grid_fractional_indices_1d(" not in script   # 2 次元格子では不要
+
+    poison_root = tmp_path / "poison"
+    pkg = poison_root / "climcanvas"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text(
+        'raise ImportError("生成スクリプトが climcanvas に依存しています")',
+        encoding="utf-8")
+    env = dict(os.environ, MPLBACKEND="Agg", PYTHONPATH=str(poison_root))
+    script_path = tmp_path / "section_path.py"
+    script_path.write_text(script, encoding="utf-8")
+    result = subprocess.run([sys.executable, str(script_path)], cwd=tmp_path,
+                            env=env, capture_output=True, text=True, timeout=180)
+    assert result.returncode == 0, f"実行失敗:\n{result.stderr}\n--- script ---\n{script}"
+    assert out_png.exists()
+
+
+def test_generated_script_with_terrain_is_standalone(curvilinear_sample_path,
+                                                     curvilinear_terrain_path, tmp_path):
+    """地形マスク (高度の変数と地形高度、別ファイル) の生成スクリプトが、埋め込んだ
+    ground_pressure_from_height / draw_section_terrain 込みで許可 import のみ・
+    climcanvas 不在環境で実行できる (ルール2)。"""
+    from test_consistency import _HF, _terrain_section_cfg
+    datasets = {"ds0": mc_dataset.open_dataset(curvilinear_sample_path),
+                "ds1": mc_dataset.open_dataset(curvilinear_terrain_path)}
+    cfg = _terrain_section_cfg({"kind": "meridian", "lon": 138.0, "lat_range": [25.0, 45.0],
+                                "npoints": 50}, "path", "lev", _HF, labels=True)
+    out_png = tmp_path / "terrain.png"
+    script = mc_scriptgen.generate_script(
+        cfg, datasets, {"ds0": curvilinear_sample_path, "ds1": curvilinear_terrain_path},
+        figure_output=str(out_png), figure_dpi=100, include_show=False)
+    extra = _import_roots(script) - _ALLOWED_ROOTS
+    assert not extra, f"許可外の import があります: {sorted(extra)}\n{script}"
+    for fn in ("def ground_pressure_from_height(", "def draw_section_terrain(",
+               "def sample_bilinear("):
+        assert fn in script, fn
+    assert "_t.set_zorder(2.4)" in script      # 等値線ラベルは地面の下
+
+    poison_root = tmp_path / "poison"
+    pkg = poison_root / "climcanvas"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text(
+        'raise ImportError("生成スクリプトが climcanvas に依存しています")',
+        encoding="utf-8")
+    env = dict(os.environ, MPLBACKEND="Agg", PYTHONPATH=str(poison_root))
+    script_path = tmp_path / "terrain.py"
+    script_path.write_text(script, encoding="utf-8")
+    result = subprocess.run([sys.executable, str(script_path)], cwd=tmp_path,
+                            env=env, capture_output=True, text=True, timeout=180)
+    assert result.returncode == 0, f"実行失敗:\n{result.stderr}\n--- script ---\n{script}"
+    assert out_png.exists()

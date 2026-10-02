@@ -34,7 +34,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 import xarray as xr
 
-from .dataset import detect_coord_roles, horizontal_dims, is_curvilinear
+from .dataset import detect_coord_roles, horizontal_dims, is_curvilinear, lonlat_bounds
 
 PROJECTIONS = ["PlateCarree", "Robinson", "EqualEarth", "NorthPolarStereo",
                "SouthPolarStereo", "Orthographic", "LambertConformal"]
@@ -126,6 +126,48 @@ class RenderError(ValueError):
             "coordinates of those grid points (e.g. with the values of the "
             "neighbouring points) and mask the data instead, or restrict the "
             "region to exclude them",
+        "section_path_no_lonlat":
+            "A section along a path needs longitude and latitude coordinates, "
+            "but none were recognized in the dataset",
+        "section_path_dim_conflict":
+            "The dataset already has a dimension named {dim!r}, which is "
+            "reserved for the section path; rename that dimension",
+        "section_path_unknown_kind":
+            "Unknown section path kind: {kind!r} (expected 'parallel', "
+            "'meridian' or 'great_circle')",
+        "section_path_antipodal":
+            "The start and end points of the section are antipodal, so the "
+            "great circle between them is not unique; move one of the points",
+        "section_path_outside_grid":
+            "The section path ({kind}) lies entirely outside the data grid "
+            "(longitude {lon_min:g} to {lon_max:g}, latitude {lat_min:g} to "
+            "{lat_max:g}); move the path or check the longitude convention",
+        "terrain_vertical_units_unknown":
+            "The terrain mask needs to know whether the vertical coordinate {dim!r} "
+            "is a pressure or a height, but its units attribute {units!r} is not "
+            "recognized (expected e.g. hPa, Pa, m or km)",
+        "terrain_method_mismatch":
+            "The terrain method {method!r} does not fit a vertical coordinate that "
+            "is a {kind} ({dim!r} [{units}]); use {expected}",
+        "terrain_variable_missing":
+            "The terrain mask variable {var!r} was not found in dataset {dataset!r}",
+        "terrain_units_unknown":
+            "The units attribute {units!r} of the terrain variable {var!r} cannot be "
+            "converted to the vertical coordinate units {target!r} (expected e.g. "
+            "{expected})",
+        "terrain_profile_dims":
+            "The terrain variable {var!r} must reduce to the section axis {x_dim!r} "
+            "after fixing the other dimensions, but has dimensions {dims}",
+        "terrain_no_lonlat":
+            "The terrain variable {var!r} in dataset {dataset!r} has no recognized "
+            "longitude/latitude coordinates, so it cannot be sampled along the "
+            "section path (attach coordinate files to that dataset)",
+        "section_overlay_panel_missing":
+            "The map refers to a section panel with panel_id {panel_id!r} to draw its "
+            "path, but no panel in the figure has that id",
+        "section_overlay_not_section":
+            "The panel {panel_id!r} referred to by the map for a section path is not "
+            "a vertical section (or its path cannot be determined)",
         "region_outside_grid":
             "The region lon [{lon_min:g}, {lon_max:g}] / lat [{lat_min:g}, "
             "{lat_max:g}] contains no grid points of this curvilinear grid "
@@ -1544,18 +1586,23 @@ def apply_averages(da: xr.DataArray, averages: dict | None,
 def select_section_data(ds: xr.Dataset, variable: str, selection: dict | None,
                         ranges: dict | None, x_dim: str, y_dim: str,
                         averages: dict | None = None,
-                        record: list | None = None) -> xr.DataArray:
+                        record: list | None = None,
+                        path: dict | None = None) -> xr.DataArray:
     """断面用に固定次元・軸範囲を切り出し、(y, x) の次元順に揃えて返す。
 
     averages があれば selection の後・panel ranges の前に適用する
     (平均で潰された dim は ranges の対象外)。record は apply_averages に渡す
-    (平均ブロックの要素数・欠損数の記録)。
+    (平均ブロックの要素数・欠損数の記録)。path (panel["section_path"]) があれば
+    平均の後・ranges の前に経路上へ双一次内挿し、水平の 2 次元を x_dim
+    (= SECTION_PATH_DIM) に置き換える (scriptgen._section_data_lines と 1 対 1)。
     """
     da = ds[variable]
     sel = {dim: val for dim, val in (selection or {}).items() if dim in da.dims}
     if sel:
         da = da.sel(sel)
     da = apply_averages(da, averages, ds, record=record)
+    if path:
+        da = sample_section_path(da, ds, section_path_spec(path, ds), x_dim)
     for dim, bounds in (ranges or {}).items():
         if dim in da.dims:
             da = da.sel({dim: coord_slice(ds[dim], bounds[0], bounds[1])})
@@ -1630,6 +1677,744 @@ def cyclic_tile_lon(da: xr.DataArray, x_dim: str, x_lo: float, x_hi: float,
         else:
             parts.append(da.assign_coords({x_dim: x + k * period}))
     return xr.concat(parts, dim=x_dim)
+
+
+# --- 断面の経路 (大円・格子番号の逆算・双一次内挿) ---
+# 経路に沿った鉛直断面 (等緯度線・等経度線・大円) の標本化。2 次元座標格子は投影法の
+# 推定に頼らず経緯度だけから格子番号を求める (docs/section_extension_plan.md)。
+# NOTE: 以下 4 関数の本体は scriptgen が inspect.getsource でそのまま再現スクリプトに
+# 埋め込む (render ⇄ scriptgen を文字どおり同一コードにするため)。そのため
+# docstring・コメントは英語、参照してよい名前は np / xr と引数だけ
+# (生成スクリプトの import と一致させること。tests/test_section_path.py が検査する)。
+
+def great_circle_points(start, end, npoints, radius_km=6371.0):
+    """Sample equally spaced points on the great circle from start to end.
+
+    ``start`` and ``end`` are (lon, lat) in degrees. Returns (lon, lat, dist_km)
+    arrays of length ``npoints``. Longitudes are continuous along the path
+    (no jump at the dateline, so they may leave [-180, 180]) and start at
+    ``start[0]``; ``dist_km`` is the distance from ``start``.
+    """
+    def unit(lon, lat):
+        lon, lat = np.deg2rad(lon), np.deg2rad(lat)
+        return np.array([np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon),
+                         np.sin(lat)])
+
+    p1 = unit(float(start[0]), float(start[1]))
+    p2 = unit(float(end[0]), float(end[1]))
+    # central angle from atan2(|p1 x p2|, p1 . p2): accurate for any angle
+    omega = np.arctan2(np.linalg.norm(np.cross(p1, p2)), np.dot(p1, p2))
+    t = np.linspace(0.0, 1.0, int(npoints))
+    if omega < 1e-12:
+        pts = np.repeat(p1[None, :], t.size, axis=0)
+    elif np.pi - omega < 1e-9:
+        raise ValueError("start and end are antipodal: the great circle is not unique")
+    else:
+        pts = (np.sin((1.0 - t) * omega)[:, None] * p1
+               + np.sin(t * omega)[:, None] * p2) / np.sin(omega)
+    lat = np.rad2deg(np.arcsin(np.clip(pts[:, 2], -1.0, 1.0)))
+    lon = np.rad2deg(np.arctan2(pts[:, 1], pts[:, 0]))
+    # continuous longitudes: offsets from start[0] wrapped to [-180, 180), then unwrapped
+    offset = (lon - float(start[0]) + 180.0) % 360.0 - 180.0
+    lon = float(start[0]) + np.rad2deg(np.unwrap(np.deg2rad(offset)))
+    return lon, lat, t * omega * radius_km
+
+
+def grid_fractional_indices(lon2d, lat2d, lon, lat, coarse=100, max_iter=8):
+    """Fractional (row, column) indices of points on a grid with 2-D lon / lat.
+
+    ``lon2d`` / ``lat2d`` are the grid longitudes / latitudes (ny, nx) in
+    degrees (any longitude convention, NaN allowed); ``lon`` / ``lat`` are the
+    points. The nearest grid point is searched on the unit sphere (a coarse
+    search on a subsampled grid, then a local search), and the position in the
+    grid cell is refined by Newton's method on the bilinear map of the cell
+    corners projected onto the plane tangent at the point (gnomonic
+    projection). No map projection of the grid is assumed. Returns (fj, fi);
+    points outside the grid, or in a cell with a NaN corner, are NaN.
+    """
+    def unit(lon, lat):
+        lon, lat = np.deg2rad(lon), np.deg2rad(lat)
+        return np.stack([np.cos(lat) * np.cos(lon), np.cos(lat) * np.sin(lon),
+                         np.sin(lat)], axis=-1)
+
+    lon2d = np.asarray(lon2d, dtype=float)
+    lat2d = np.asarray(lat2d, dtype=float)
+    ny, nx = lon2d.shape
+    if ny < 2 or nx < 2:
+        raise ValueError("the grid needs at least 2 x 2 points")
+    lon = np.atleast_1d(np.asarray(lon, dtype=float))
+    lat = np.atleast_1d(np.asarray(lat, dtype=float))
+    g = unit(lon2d, lat2d)                       # (ny, nx, 3), NaN where coords are NaN
+    ok = np.all(np.isfinite(g), axis=-1)
+    g0 = np.where(ok[..., None], g, 0.0)
+    p = unit(lon, lat)                           # (n, 3)
+    n = p.shape[0]
+    fj = np.full(n, np.nan)
+    fi = np.full(n, np.nan)
+
+    # 1) coarse nearest search on a subsampled grid (chunks of points)
+    step = max(1, int(np.ceil(max(ny, nx) / coarse)))
+    cj = np.arange(0, ny, step)
+    ci = np.arange(0, nx, step)
+    gc = g0[np.ix_(cj, ci)].reshape(-1, 3)
+    okc = ok[np.ix_(cj, ci)].ravel()
+    start = np.full(n, -1)
+    for k0 in range(0, n, 512):
+        d = gc @ np.nan_to_num(p[k0:k0 + 512]).T      # (m, chunk)
+        d[~okc, :] = -np.inf
+        start[k0:k0 + 512] = np.argmax(d, axis=0)
+    # 2) local search: move a window until its centre is the nearest point in it
+    for k in range(n):
+        if not (np.all(np.isfinite(p[k])) and okc[start[k]]):
+            continue
+        j, i = cj[start[k] // ci.size], ci[start[k] % ci.size]
+        for _ in range(ny + nx):
+            j0, j1 = max(j - step, 0), min(j + step + 1, ny)
+            i0, i1 = max(i - step, 0), min(i + step + 1, nx)
+            d = g0[j0:j1, i0:i1] @ p[k]
+            d[~ok[j0:j1, i0:i1]] = -np.inf
+            jj, ii = np.unravel_index(int(np.argmax(d)), d.shape)
+            if (j0 + jj, i0 + ii) == (j, i):
+                break
+            j, i = j0 + jj, i0 + ii
+        fj[k], fi[k] = j, i
+
+    # 3) Newton's method on the bilinear map in the tangent (gnomonic) plane
+    lo, la = np.deg2rad(lon), np.deg2rad(lat)
+    east = np.stack([-np.sin(lo), np.cos(lo), np.zeros_like(lo)], axis=-1)
+    north = np.stack([-np.sin(la) * np.cos(lo), -np.sin(la) * np.sin(lo), np.cos(la)],
+                     axis=-1)
+
+    def plane(v):
+        w = v / np.sum(v * p, axis=-1, keepdims=True)
+        return np.sum(w * east, axis=-1), np.sum(w * north, axis=-1)
+
+    def cell(fj, fi):
+        jc = np.clip(np.floor(np.nan_to_num(fj)), 0, ny - 2).astype(int)
+        ic = np.clip(np.floor(np.nan_to_num(fi)), 0, nx - 2).astype(int)
+        a, b = fj - jc, fi - ic
+        x00, y00 = plane(g[jc, ic])
+        x01, y01 = plane(g[jc, ic + 1])
+        x10, y10 = plane(g[jc + 1, ic])
+        x11, y11 = plane(g[jc + 1, ic + 1])
+        x = x00 * (1 - a) * (1 - b) + x01 * (1 - a) * b + x10 * a * (1 - b) + x11 * a * b
+        y = y00 * (1 - a) * (1 - b) + y01 * (1 - a) * b + y10 * a * (1 - b) + y11 * a * b
+        xa = (x10 - x00) * (1 - b) + (x11 - x01) * b
+        xb = (x01 - x00) * (1 - a) + (x11 - x10) * a
+        ya = (y10 - y00) * (1 - b) + (y11 - y01) * b
+        yb = (y01 - y00) * (1 - a) + (y11 - y10) * a
+        return x, y, xa, xb, ya, yb
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        for _ in range(max_iter):
+            x, y, xa, xb, ya, yb = cell(fj, fi)
+            det = xa * yb - xb * ya
+            da = np.clip((xb * y - yb * x) / det, -1.0, 1.0)
+            db = np.clip((ya * x - xa * y) / det, -1.0, 1.0)
+            fj, fi = fj + da, fi + db
+            if not np.any(np.abs(np.nan_to_num(da)) + np.abs(np.nan_to_num(db)) > 1e-10):
+                break
+        # not converged (residual larger than 1e-6 of the cell size) -> NaN
+        x, y, xa, xb, ya, yb = cell(fj, fi)
+        size = np.hypot(xa, ya) + np.hypot(xb, yb)
+        bad = ~(np.hypot(x, y) <= 1e-6 * size)
+    tol = 1e-6
+    bad |= (fj < -tol) | (fj > ny - 1 + tol) | (fi < -tol) | (fi > nx - 1 + tol)
+    fj = np.where(bad, np.nan, np.clip(fj, 0, ny - 1))
+    fi = np.where(bad, np.nan, np.clip(fi, 0, nx - 1))
+    return fj, fi
+
+
+def grid_fractional_indices_1d(lon1d, lat1d, lon, lat):
+    """Fractional (row, column) indices of points on a grid with 1-D lat / lon.
+
+    Point longitudes are wrapped into the grid's convention and both axes may
+    be ascending or descending. On a global grid whose longitudes wrap around
+    (last + spacing = first + 360), a point between the last and the first
+    column gets fi outside [0, nx - 1] (nx - 1 .. nx, or -1 .. 0 when the
+    longitudes descend); pass ``wrap_x=True`` to sample_bilinear then.
+    Returns (fj, fi); points outside the grid are NaN.
+    """
+    lon1d = np.asarray(lon1d, dtype=float)
+    lat1d = np.asarray(lat1d, dtype=float)
+    lon = np.atleast_1d(np.asarray(lon, dtype=float))
+    lat = np.atleast_1d(np.asarray(lat, dtype=float))
+
+    def frac(coord, values, wrap=False):
+        order = np.argsort(coord)
+        c, idx = coord[order], order.astype(float)
+        if wrap:
+            # the column after the last one is the first one again, 360 degrees on
+            c = np.append(c, c[0] + 360.0)
+            idx = np.append(idx, idx[-1] + (1.0 if idx[-1] > idx[0] else -1.0))
+        return np.interp(values, c, idx, left=np.nan, right=np.nan)
+
+    nx = lon1d.size
+    wrap = bool(nx > 2 and abs(abs(lon1d[-1] - lon1d[0])
+                               + abs(lon1d[1] - lon1d[0]) - 360.0) < 1e-3)
+    base = np.min(lon1d)
+    lonw = (lon - base) % 360.0 + base
+    return frac(lat1d, lat), frac(lon1d, lonw, wrap)
+
+
+def sample_bilinear(da, ydim, xdim, fj, fi, dim, wrap_x=False):
+    """Bilinearly interpolate ``da`` at fractional grid indices (fj, fi).
+
+    The two horizontal dimensions ``ydim`` / ``xdim`` are replaced by the new
+    dimension ``dim``; coordinates that depend on them are dropped (assign the
+    path coordinates afterwards). A point is NaN if fj / fi is NaN or if a
+    corner with a positive weight is NaN (no value is made up from missing
+    data). With ``wrap_x`` the column after the last one is column 0.
+    """
+    ny, nx = da.sizes[ydim], da.sizes[xdim]
+    attrs = dict(da.attrs)
+    da = da.drop_vars([c for c in da.coords if set(da[c].dims) & {ydim, xdim}])
+    fj = np.asarray(fj, dtype=float)
+    fi = np.asarray(fi, dtype=float)
+    valid = np.isfinite(fj) & np.isfinite(fi)
+    fj0 = np.where(valid, fj, 0.0)
+    fi0 = np.where(valid, fi, 0.0)
+    j0 = np.clip(np.floor(fj0), 0, ny - 2).astype(int)
+    if wrap_x:
+        i0 = np.floor(fi0).astype(int)
+        b = fi0 - i0
+        i1 = (i0 + 1) % nx
+        i0 = i0 % nx
+    else:
+        i0 = np.clip(np.floor(fi0), 0, nx - 2).astype(int)
+        b = fi0 - i0
+        i1 = i0 + 1
+    a = fj0 - j0
+    out = 0.0
+    for jj, ii, w in ((j0, i0, (1 - a) * (1 - b)), (j0, i1, (1 - a) * b),
+                      (j0 + 1, i0, a * (1 - b)), (j0 + 1, i1, a * b)):
+        v = da.isel({ydim: xr.DataArray(jj, dims=dim), xdim: xr.DataArray(ii, dims=dim)})
+        w = xr.DataArray(w, dims=dim)
+        # zero-weight corners do not contribute (their NaN must not spread);
+        # DataArray.where keeps the dimension order of v
+        out = out + (v * w).where(w > 0, 0.0)
+    out = out.where(xr.DataArray(valid, dims=dim))
+    out.attrs = attrs
+    return out
+
+
+def lonlat_tick_label(value, x, lon, lat):
+    """Three-line tick label 'value / lon / lat' for the axis value ``value``.
+
+    ``x`` are the axis values along the section (any order) with the
+    longitudes / latitudes ``lon`` / ``lat`` of the same points; the position
+    is interpolated linearly. Values outside the section get an empty label.
+    """
+    x = np.asarray(x, dtype=float)
+    order = np.argsort(x)
+    if value < x[order[0]] - 1e-9 or value > x[order[-1]] + 1e-9:
+        return ""
+    # unwrap longitudes so that a 179 -> -179 step does not interpolate to 0
+    lon = np.rad2deg(np.unwrap(np.deg2rad(np.asarray(lon, dtype=float)[order])))
+    lo = float(np.interp(value, x[order], lon))
+    la = float(np.interp(value, x[order], np.asarray(lat, dtype=float)[order]))
+    lo = (lo + 180.0) % 360.0 - 180.0
+    ew = "E" if lo > 0 else ("W" if lo < 0 else "")
+    ns = "N" if la > 0 else ("S" if la < 0 else "")
+    return f"{value:g}\n{abs(lo):.1f}\u00b0{ew}\n{abs(la):.1f}\u00b0{ns}"
+
+
+def ground_pressure_from_height(z, lev, zs):
+    """Pressure of the ground in each column of a vertical section.
+
+    ``z`` (nlev, n) are the heights of the pressure levels ``lev`` (nlev, any
+    order, any pressure unit) and ``zs`` (n) the terrain heights, all in the
+    same length unit. Between the two levels that bracket ``zs`` the pressure
+    is interpolated linearly in log(p). Columns whose ground lies below the
+    lowest level (nothing to cover) and columns with NaN get NaN; columns whose
+    ground lies above the highest level get the highest level.
+    """
+    z = np.asarray(z, dtype=float)
+    lev = np.asarray(lev, dtype=float)
+    zs = np.asarray(zs, dtype=float)
+    order = np.argsort(-lev)                 # from the ground (high pressure) upwards
+    z, lev = z[order], lev[order]
+    out = np.full(zs.shape, np.nan)
+    for k in range(lev.size - 1):
+        z0, z1 = z[k], z[k + 1]
+        hit = np.isnan(out) & (zs > z0) & (zs <= z1)
+        frac = (zs - z0) / (z1 - z0)
+        out = np.where(hit, np.exp(np.log(lev[k]) + frac * (np.log(lev[k + 1]) - np.log(lev[k]))),
+                       out)
+    above_top = np.isnan(out) & (zs > z[-1])
+    return np.where(above_top, lev[-1], out)
+
+
+def draw_section_terrain(ax, x, ground, pressure_like, color, zorder=2.5):
+    """Fill the area below the ground line of a vertical section, above the layers.
+
+    ``ground`` is the ground position in the units of the vertical axis (NaN
+    where unknown). For a pressure axis (``pressure_like``) the ground side is
+    the large values, otherwise the small values. The polygon is clipped to the
+    current axis limits so that it does not change the automatic axis range.
+    """
+    ylim = ax.get_ylim()
+    lo, hi = min(ylim), max(ylim)
+    g = np.clip(np.asarray(ground, dtype=float), lo, hi)
+    bottom = hi if pressure_like else lo
+    ax.fill_between(np.asarray(x, dtype=float), g, bottom, color=color, linewidth=0,
+                    zorder=zorder)
+    ax.set_ylim(ylim)
+
+
+# 地形マスクの多角形の zorder: 等値線・流線 (2) の上、文字 (3)・等値線ラベル (4) の下
+TERRAIN_ZORDER = 2.5
+# 単位の換算表 (小文字)。値 = 基準単位 (Pa / m) への倍率
+_PRESSURE_UNIT_FACTORS = {"pa": 1.0, "hpa": 100.0, "mb": 100.0, "mbar": 100.0, "millibar": 100.0,
+                          "millibars": 100.0, "hectopascal": 100.0, "hectopascals": 100.0,
+                          "kpa": 1000.0}
+_LENGTH_UNIT_FACTORS = {"m": 1.0, "meter": 1.0, "meters": 1.0, "metre": 1.0, "metres": 1.0,
+                        "km": 1000.0, "gpm": 1.0, "geopotential_meter": 1.0,
+                        "geopotential meters": 1.0}
+_GEOPOTENTIAL_UNITS = ("m2 s-2", "m2/s2", "m**2 s**-2", "m^2 s^-2", "m^2/s^2", "m2 s^-2")
+_GRAVITY = 9.80665
+
+
+def vertical_axis_kind(units) -> str | None:
+    """鉛直座標の units から "pressure" / "height" / None を返す。"""
+    u = str(units or "").strip().lower()
+    if u in _PRESSURE_UNIT_FACTORS:
+        return "pressure"
+    if u in _LENGTH_UNIT_FACTORS:
+        return "height"
+    return None
+
+
+def unit_factor(units_from, units_to, kind: str) -> float | None:
+    """units_from の値を units_to にする倍率 (kind = "pressure" / "height")。不明なら None。
+    高度ではジオポテンシャル (m2 s-2) も受け、g で割って m にする。"""
+    table = _PRESSURE_UNIT_FACTORS if kind == "pressure" else _LENGTH_UNIT_FACTORS
+    a = str(units_from or "").strip().lower()
+    b = str(units_to or "").strip().lower()
+    if b not in table:
+        return None
+    if kind == "height" and a in _GEOPOTENTIAL_UNITS:
+        return 1.0 / _GRAVITY / table[b]
+    if a not in table:
+        return None
+    return table[a] / table[b]
+
+
+# 経路断面の合成次元の名前 (panel["x_dim"] に入れる)
+SECTION_PATH_DIM = "path"
+SECTION_PATH_KINDS = ("parallel", "meridian", "great_circle")
+_EARTH_RADIUS_KM = 6371.0
+_SECTION_PATH_MAX_POINTS = 5000
+
+
+def grid_spacing_km(ds: xr.Dataset, roles: dict, lat_ref: float | None = None) -> float:
+    """水平格子の代表的な格子間隔 [km] (経路断面の点数の自動決定用)。
+
+    2 次元座標格子は隣り合う格子点の球面距離 (行方向・列方向、間引いて計算) の中央値。
+    1 次元格子は緯度間隔と経度間隔 (lat_ref、無ければ格子の緯度の中央値で cos を掛ける)
+    の小さい方。
+    """
+    lon_name, lat_name = roles["lon"], roles["lat"]
+    lon = ds[lon_name].values.astype(float)
+    lat = ds[lat_name].values.astype(float)
+
+    def dist(lon1, lat1, lon2, lat2):
+        lon1, lat1, lon2, lat2 = map(np.deg2rad, (lon1, lat1, lon2, lat2))
+        h = (np.sin((lat2 - lat1) / 2) ** 2
+             + np.cos(lat1) * np.cos(lat2) * np.sin((lon2 - lon1) / 2) ** 2)
+        return 2 * _EARTH_RADIUS_KM * np.arcsin(np.sqrt(np.clip(h, 0.0, 1.0)))
+
+    if lon.ndim == 2:
+        step = max(1, int(np.ceil(max(lon.shape) / 200)))
+        lo, la = lon[::step, ::step], lat[::step, ::step]
+        d = np.concatenate([dist(lo[:, :-1], la[:, :-1], lo[:, 1:], la[:, 1:]).ravel(),
+                            dist(lo[:-1, :], la[:-1, :], lo[1:, :], la[1:, :]).ravel()])
+        d = d[np.isfinite(d) & (d > 0)]
+        return float(np.median(d)) / step if d.size else 1.0
+    deg_km = np.deg2rad(1.0) * _EARTH_RADIUS_KM
+    ref = float(np.median(lat)) if lat_ref is None else float(lat_ref)
+    cands = []
+    if lat.size > 1:
+        cands.append(float(np.median(np.abs(np.diff(lat)))) * deg_km)
+    if lon.size > 1:
+        cands.append(float(np.median(np.abs(np.diff(lon)))) * deg_km
+                     * max(np.cos(np.deg2rad(ref)), 0.05))
+    return min(cands) if cands else 1.0
+
+
+def section_path_length_km(path: dict) -> float:
+    """経路の長さ [km] (等緯度線は緯線に沿った距離、大円は大円距離)。"""
+    kind = path.get("kind")
+    if kind == "parallel":
+        lo, hi = path["lon_range"]
+        return abs(np.deg2rad(hi - lo)) * _EARTH_RADIUS_KM * abs(np.cos(np.deg2rad(path["lat"])))
+    if kind == "meridian":
+        lo, hi = path["lat_range"]
+        return abs(np.deg2rad(hi - lo)) * _EARTH_RADIUS_KM
+    if kind == "great_circle":
+        try:
+            return float(great_circle_points(path["start"], path["end"], 2)[2][-1])
+        except ValueError:
+            raise RenderError("section_path_antipodal") from None
+    raise RenderError("section_path_unknown_kind", kind=kind)
+
+
+def section_path_spec(path: dict, ds: xr.Dataset) -> dict:
+    """panel["section_path"] を、点の数まで確定した dict にして返す。
+
+    npoints が None なら「経路長 ÷ 格子間隔 を切り上げ + 1」(2〜5000 点) で決める。
+    scriptgen も同じ関数で点数を決め、リテラルで生成スクリプトに出す (1 対 1)。
+    """
+    kind = path.get("kind")
+    if kind not in SECTION_PATH_KINDS:
+        raise RenderError("section_path_unknown_kind", kind=kind)
+    spec = dict(path)
+    n = spec.get("npoints")
+    if n is None:
+        roles = detect_coord_roles(ds)
+        if not (roles.get("lon") and roles.get("lat")):
+            raise RenderError("section_path_no_lonlat")
+        lat_ref = None
+        if kind == "parallel":
+            lat_ref = float(spec["lat"])
+        elif kind == "meridian":
+            lat_ref = float(np.mean(spec["lat_range"]))
+        else:
+            lat_ref = float(np.mean([spec["start"][1], spec["end"][1]]))
+        spacing = grid_spacing_km(ds, roles, lat_ref)
+        n = int(np.ceil(section_path_length_km(spec) / max(spacing, 1e-6))) + 1
+    spec["npoints"] = int(min(max(n, 2), _SECTION_PATH_MAX_POINTS))
+    return spec
+
+
+def section_path_points(spec: dict) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """確定した経路 (section_path_spec の返り値) の点 (lon, lat, 横軸の値) を返す。
+
+    横軸の値は 等緯度線 = 経度、等経度線 = 緯度、大円 = 始点からの距離 [km]。
+    scriptgen は同じ値を np.linspace / np.full / great_circle_points の行で出す。
+    """
+    kind, n = spec["kind"], int(spec["npoints"])
+    if kind == "parallel":
+        lon = np.linspace(float(spec["lon_range"][0]), float(spec["lon_range"][1]), n)
+        return lon, np.full(n, float(spec["lat"])), lon
+    if kind == "meridian":
+        lat = np.linspace(float(spec["lat_range"][0]), float(spec["lat_range"][1]), n)
+        return np.full(n, float(spec["lon"])), lat, lat
+    if kind == "great_circle":
+        try:
+            return great_circle_points(tuple(spec["start"]), tuple(spec["end"]), n)
+        except ValueError:
+            raise RenderError("section_path_antipodal") from None
+    raise RenderError("section_path_unknown_kind", kind=kind)
+
+
+def section_path_grid(ds: xr.Dataset) -> tuple[str, str, bool]:
+    """経路断面で内挿する水平格子の (ydim, xdim, 2 次元座標格子か) を返す。
+
+    1 次元格子は全球格子の継ぎ目をまたげるよう sample_bilinear に wrap_x=True を渡す
+    (2 次元座標格子は False)。経緯度が認識できなければ RenderError。
+    """
+    roles = detect_coord_roles(ds)
+    if not (roles.get("lon") and roles.get("lat")):
+        raise RenderError("section_path_no_lonlat")
+    ydim, xdim = horizontal_dims(ds, roles)
+    return ydim, xdim, is_curvilinear(ds, roles)
+
+
+def section_path_indices(ds: xr.Dataset, lon: np.ndarray, lat: np.ndarray):
+    """経路の点の小数格子番号 (fj, fi) と、sample_bilinear に渡す (ydim, xdim, wrap_x)。
+
+    2 次元座標格子は grid_fractional_indices、1 次元格子は grid_fractional_indices_1d。
+    scriptgen._section_path_vars と 1 対 1。
+    """
+    roles = detect_coord_roles(ds)
+    ydim, xdim, curvi = section_path_grid(ds)
+    if curvi:
+        fj, fi = grid_fractional_indices(
+            ds[roles["lon"]].transpose(ydim, xdim).values,
+            ds[roles["lat"]].transpose(ydim, xdim).values, lon, lat)
+    else:
+        fj, fi = grid_fractional_indices_1d(ds[roles["lon"]].values, ds[roles["lat"]].values,
+                                            lon, lat)
+    return fj, fi, ydim, xdim, not curvi
+
+
+def sample_section_path(da: xr.DataArray, ds: xr.Dataset, spec: dict,
+                        dim: str = SECTION_PATH_DIM) -> xr.DataArray:
+    """変数 da を経路上の点へ双一次内挿し、水平の 2 次元を経路の次元 dim に置き換える。
+
+    dim の座標 = 横軸の値 (section_path_points)、補助座標 {dim}_lon / {dim}_lat =
+    各点の経緯度 (目盛の経緯度併記・地図への経路表示用)。
+    """
+    if dim in ds.dims:
+        raise RenderError("section_path_dim_conflict", dim=dim)
+    lon, lat, x = section_path_points(spec)
+    fj, fi, ydim, xdim, wrap = section_path_indices(ds, lon, lat)
+    if not np.any(np.isfinite(fj) & np.isfinite(fi)):
+        b = lonlat_bounds(ds) or {}
+        raise RenderError("section_path_outside_grid", kind=spec["kind"],
+                          lon_min=b.get("lon_min", float("nan")),
+                          lon_max=b.get("lon_max", float("nan")),
+                          lat_min=b.get("lat_min", float("nan")),
+                          lat_max=b.get("lat_max", float("nan")))
+    out = sample_bilinear(da, ydim, xdim, fj, fi, dim, wrap_x=wrap)
+    return out.assign_coords({dim: x, f"{dim}_lon": (dim, lon), f"{dim}_lat": (dim, lat)})
+
+
+def section_x_lonlat(panel: dict, datasets: dict):
+    """断面の横軸の値と、その位置の経緯度 (x, lon, lat) を返す (目盛の経緯度併記用)。
+
+    経路断面は経路の点そのもの。格子線断面 (2 次元座標格子で x_dim が格子の dim) は、
+    先頭レイヤーの固定した行・列に沿った格子点の経緯度。求められない断面
+    (1 次元格子の従来の断面など) は None。scriptgen は同じ値を出す行を生成する。
+    """
+    layers = panel.get("layers") or []
+    if not layers:
+        return None
+    ds = datasets[layers[0]["dataset_id"]]
+    spec = panel.get("section_path")
+    if spec:
+        lon, lat, x = section_path_points(section_path_spec(spec, ds))
+        return x, lon, lat
+    roles = detect_coord_roles(ds)
+    if not is_curvilinear(ds, roles):
+        return None
+    hdims = horizontal_dims(ds, roles)
+    x_dim = panel.get("x_dim")
+    if x_dim not in hdims:
+        return None
+    other = hdims[1] if x_dim == hdims[0] else hdims[0]
+    selection = {**(panel.get("selection") or {}), **(layers[0].get("selection") or {})}
+    if other not in selection:
+        return None
+    # 座標のない次元 (bare dim) の .sel は位置 (index) の固定として働く (データの
+    # 切り出し select_section_data と同じ書き方)。x_dim が bare なら格子番号 = 0 始まりの index
+    lon = ds[roles["lon"]].sel({other: selection[other]}).transpose(x_dim).values
+    lat = ds[roles["lat"]].sel({other: selection[other]}).transpose(x_dim).values
+    return ds[x_dim].values.astype(float), lon, lat
+
+
+def section_panel_lonlat(panel: dict, datasets: dict):
+    """鉛直断面パネルの経路の経緯度 (lon, lat) — 地図に重ねる用。鉛直断面でなければ None。
+
+    経路断面 = 経路の標本点そのもの。2 次元座標格子の格子線断面 = 先頭レイヤーで固定した
+    行・列に沿った格子点 (横軸の範囲内)。1 次元格子の従来の断面 = 先頭レイヤーで固定した
+    緯度 (経度) に沿う格子点 (横軸の範囲内)。固定値が無い (平均など) なら None。
+    scriptgen._section_overlay_lines と 1 対 1。
+    """
+    layers = panel.get("layers") or []
+    if panel.get("plot_type") != "section_2d" or not layers:
+        return None
+    ds = datasets.get(layers[0].get("dataset_id"))
+    if ds is None:
+        return None
+    spec = panel.get("section_path")
+    if spec:
+        lon, lat, _x = section_path_points(section_path_spec(spec, ds))
+        return lon, lat
+    roles = detect_coord_roles(ds)
+    x_dim, y_dim = panel.get("x_dim"), panel.get("y_dim")
+    if y_dim != roles.get("vertical") or not (roles.get("lon") and roles.get("lat")):
+        return None
+    selection = _terrain_selection(panel)
+    ranges = panel.get("ranges") or {}
+    if is_curvilinear(ds, roles):
+        hd = horizontal_dims(ds, roles)
+        if x_dim not in hd:
+            return None
+        other = hd[1] if x_dim == hd[0] else hd[0]
+        if other not in selection:
+            return None
+        lon = ds[roles["lon"]].sel({other: selection[other]}).transpose(x_dim)
+        lat = ds[roles["lat"]].sel({other: selection[other]}).transpose(x_dim)
+        if x_dim in ranges and x_dim in ds.coords:
+            sl = coord_slice(ds[x_dim], ranges[x_dim][0], ranges[x_dim][1])
+            lon, lat = lon.sel({x_dim: sl}), lat.sel({x_dim: sl})
+        return lon.values.astype(float), lat.values.astype(float)
+    if x_dim == roles["lon"]:
+        fixed = roles["lat"]
+    elif x_dim == roles["lat"]:
+        fixed = roles["lon"]
+    else:
+        return None
+    if fixed not in selection:
+        return None
+    x = ds[x_dim]
+    if x_dim in ranges:
+        x = x.sel({x_dim: coord_slice(ds[x_dim], ranges[x_dim][0], ranges[x_dim][1])})
+    x = x.values.astype(float)
+    const = np.full(x.size, float(selection[fixed]))
+    return (x, const) if x_dim == roles["lon"] else (const, x)
+
+
+def section_overlay_items(panel: dict, figure_config: dict | None, datasets: dict):
+    """地図パネルの map.section_paths を解決し、[(設定, lon, lat)] を返す。
+
+    参照先は figure_config["panels"] の panel_id で探す。無ければ / 鉛直断面でなければ
+    RenderError (黙って描かない、ではなく知らせる)。figure_config が無い (単独描画) なら空。
+    """
+    items = (panel.get("map") or {}).get("section_paths") or []
+    if not items or not figure_config:
+        return []
+    out = []
+    for item in items:
+        ref = item.get("panel_id")
+        target = next((p for p in figure_config.get("panels") or []
+                       if p.get("panel_id") == ref), None)
+        if target is None:
+            raise RenderError("section_overlay_panel_missing", panel_id=ref)
+        ll = section_panel_lonlat(target, datasets)
+        if ll is None:
+            raise RenderError("section_overlay_not_section", panel_id=ref)
+        out.append((item, ll[0], ll[1]))
+    return out
+
+
+def section_overlay_kwargs(item: dict) -> dict:
+    """経路の線の ax.plot 引数 (render / scriptgen 共用)。"""
+    return {"color": item.get("color") or "black",
+            "linewidth": float(item.get("width", 1.5)),
+            "linestyle": item.get("linestyle") or "-"}
+
+
+def section_overlay_label_specs(item: dict, lon, lat) -> list[tuple]:
+    """端点の文字 [(lon, lat, text, ha)]。end_labels が False なら空、空文字の端は出さない。
+    始点は進行方向と逆側 (右向きの経路なら左) に寄せる。"""
+    if not item.get("end_labels"):
+        return []
+    labels = list(item.get("labels") or ["A", "B"])
+    labels = (labels + ["A", "B"])[:2]
+    eastward = float(lon[-1]) >= float(lon[0])
+    specs = [(float(lon[0]), float(lat[0]), str(labels[0]), "right" if eastward else "left"),
+             (float(lon[-1]), float(lat[-1]), str(labels[1]), "left" if eastward else "right")]
+    return [sp for sp in specs if sp[2].strip()]
+
+
+def terrain_enabled(panel: dict) -> bool:
+    """地形マスク (panel["terrain"]) が有効か。旧 config (キー無し) は False。"""
+    return bool((panel.get("terrain") or {}).get("show"))
+
+
+def _terrain_selection(panel: dict) -> dict:
+    """地形の変数に当てる固定値: パネルの selection + 先頭レイヤーの selection
+    (格子線断面・従来の断面の固定した行・緯度は先頭レイヤーが持つ)。"""
+    layers = panel.get("layers") or []
+    first = (layers[0].get("selection") or {}) if layers else {}
+    return {**(panel.get("selection") or {}), **first}
+
+
+def section_terrain_profile(panel: dict, datasets: dict, dsid: str, var: str,
+                            with_vertical: bool = False) -> xr.DataArray:
+    """地形マスク用に変数 var を断面の位置で切り出す。
+
+    with_vertical=False: 水平 2 次元の変数 (地上気圧・地形高度) → 断面の横軸だけの 1 次元。
+    with_vertical=True: 鉛直を持つ変数 (高度の変数) → (y_dim, x_dim) の 2 次元。
+    経路断面は経路上へ双一次内挿、格子線・従来の断面は先頭レイヤーの固定値で切り出す
+    (scriptgen._terrain_lines と 1 対 1)。
+    """
+    ds = datasets.get(dsid)
+    if ds is None or var not in ds.data_vars:
+        raise RenderError("terrain_variable_missing", var=var, dataset=dsid)
+    x_dim, y_dim = panel["x_dim"], panel["y_dim"]
+    spec = panel.get("section_path")
+    if spec:
+        roles = detect_coord_roles(ds)
+        if not (roles.get("lon") and roles.get("lat")):
+            raise RenderError("terrain_no_lonlat", var=var, dataset=dsid)
+    if with_vertical:
+        return select_section_data(ds, var, _terrain_selection(panel), panel.get("ranges"),
+                                   x_dim, y_dim, path=spec)
+    da = ds[var]
+    sel = {d: v for d, v in _terrain_selection(panel).items() if d in da.dims}
+    if sel:
+        da = da.sel(sel)
+    if spec:
+        da = sample_section_path(da, ds, section_path_spec(spec, ds), x_dim)
+    for dim, bounds in (panel.get("ranges") or {}).items():
+        if dim in da.dims:
+            da = da.sel({dim: coord_slice(ds[dim], bounds[0], bounds[1])})
+    if tuple(da.dims) != (x_dim,):
+        raise RenderError("terrain_profile_dims", var=var, x_dim=x_dim, dims=list(da.dims))
+    return da
+
+
+def section_terrain_spec(panel: dict, datasets: dict) -> dict:
+    """地形マスクの設定を解決し、単位の換算まで確定した dict を返す。
+
+    返り値: {"method", "dsid", "var", "factor", "pressure_like", "hdsid", "hvar",
+    "hfactor", "lev_factor", "y_units"}。scriptgen も同じ関数で倍率を決めてリテラルで出す。
+    """
+    cfg = panel.get("terrain") or {}
+    layers = panel.get("layers") or []
+    ds0 = datasets[layers[0]["dataset_id"]]
+    y_dim = panel["y_dim"]
+    y_units = str(ds0[y_dim].attrs.get("units", ""))
+    kind = vertical_axis_kind(y_units)
+    if kind is None:
+        raise RenderError("terrain_vertical_units_unknown", dim=y_dim, units=y_units)
+    method = cfg.get("method") or "surface_pressure"
+    need = {"surface_pressure": "pressure", "surface_height": "height",
+            "height_field": "pressure"}.get(method)
+    if need is None or need != kind:
+        expected = ("surface_pressure or height_field" if kind == "pressure"
+                    else "surface_height")
+        raise RenderError("terrain_method_mismatch", method=method, kind=kind, dim=y_dim,
+                          units=y_units, expected=expected)
+    dsid = cfg.get("dataset_id") or layers[0]["dataset_id"]
+    var = cfg.get("variable")
+    ds = datasets.get(dsid)
+    if ds is None or not var or var not in ds.data_vars:
+        raise RenderError("terrain_variable_missing", var=var, dataset=dsid)
+    out = {"method": method, "dsid": dsid, "var": var, "pressure_like": kind == "pressure",
+           "y_units": y_units, "hdsid": None, "hvar": None, "hfactor": None, "lev_factor": None}
+    if method == "height_field":
+        # 地形高度は m に、高度の変数も m に (ジオポテンシャルは g で割る)、気圧面は y_units のまま
+        zs_units = str(ds[var].attrs.get("units", ""))
+        f = unit_factor(zs_units, "m", "height")
+        if f is None:
+            raise RenderError("terrain_units_unknown", units=zs_units, var=var, target="m",
+                              expected="m, km, m2 s-2")
+        out["factor"] = f
+        hdsid = cfg.get("height_dataset_id") or layers[0]["dataset_id"]
+        hvar = cfg.get("height_variable")
+        hds = datasets.get(hdsid)
+        if hds is None or not hvar or hvar not in hds.data_vars:
+            raise RenderError("terrain_variable_missing", var=hvar, dataset=hdsid)
+        h_units = str(hds[hvar].attrs.get("units", ""))
+        hf = unit_factor(h_units, "m", "height")
+        if hf is None:
+            raise RenderError("terrain_units_unknown", units=h_units, var=hvar, target="m",
+                              expected="m, km, m2 s-2")
+        out.update({"hdsid": hdsid, "hvar": hvar, "hfactor": hf, "lev_factor": 1.0})
+    else:
+        s_units = str(ds[var].attrs.get("units", ""))
+        f = unit_factor(s_units, y_units, kind)
+        if f is None:
+            raise RenderError("terrain_units_unknown", units=s_units, var=var, target=y_units,
+                              expected=("Pa, hPa" if kind == "pressure" else "m, km, m2 s-2"))
+        out["factor"] = f
+    return out
+
+
+def section_terrain_ground(panel: dict, datasets: dict):
+    """地形マスクの地面の線 (x, ground [鉛直座標の単位], pressure_like) を返す。
+
+    scriptgen._terrain_lines と 1 対 1。show が False なら None。
+    """
+    if not terrain_enabled(panel):
+        return None
+    spec = section_terrain_spec(panel, datasets)
+    surf = section_terrain_profile(panel, datasets, spec["dsid"], spec["var"])
+    x = surf[panel["x_dim"]].values
+    if spec["method"] == "height_field":
+        z = section_terrain_profile(panel, datasets, spec["hdsid"], spec["hvar"],
+                                    with_vertical=True)
+        ground = ground_pressure_from_height(z.values * spec["hfactor"],
+                                             z[panel["y_dim"]].values * spec["lev_factor"],
+                                             surf.values * spec["factor"])
+    else:
+        ground = surf.values * spec["factor"]
+    return x, ground, spec["pressure_like"]
 
 
 # --- 描画 ---
@@ -1756,7 +2541,7 @@ def cell_grid_bounds(cell, ncols: int) -> tuple[int, int, int, int]:
 
 
 def _render_panel(fig, panel: dict, datasets: dict[str, xr.Dataset],
-                  subplot: tuple):
+                  subplot: tuple, figure_config: dict | None = None):
     """plot_type に応じたレンダラへ dispatch する (subplot = add_subplot の位置引数)。
 
     subplot は (nrows, ncols, セル位置) — セル位置は行優先のセル番号 (int) または
@@ -1764,7 +2549,8 @@ def _render_panel(fig, panel: dict, datasets: dict[str, xr.Dataset],
     (SubplotSpec,) の1要素タプル (どちらも fig.add_subplot(*subplot) で通る)。
     """
     if panel["plot_type"] == "horizontal_map":
-        return _render_horizontal_map(fig, panel, datasets, subplot=subplot)
+        return _render_horizontal_map(fig, panel, datasets, subplot=subplot,
+                                      figure_config=figure_config)
     elif panel["plot_type"] == "section_2d":
         return _render_section_2d(fig, panel, datasets, subplot=subplot)
     elif panel["plot_type"] == "line_1d":
@@ -1895,7 +2681,7 @@ def _render_figure(figure_config: dict, datasets: dict[str, xr.Dataset]):
         subplots = [(nrows, ncols, cell) for cell in cells]
     axes = []
     for panel, subplot in zip(figure_config["panels"], subplots):
-        axes.append(_render_panel(fig, panel, datasets, subplot))
+        axes.append(_render_panel(fig, panel, datasets, subplot, figure_config))
     _draw_shared_colorbar(fig, axes, figure_config)
     return fig
 
@@ -2348,7 +3134,8 @@ def _apply_box_aspect(ax, panel: dict) -> None:
 
 
 def _render_horizontal_map(fig, panel: dict, datasets: dict[str, xr.Dataset],
-                           subplot: tuple[int, int, int] = (1, 1, 1)):
+                           subplot: tuple[int, int, int] = (1, 1, 1),
+                           figure_config: dict | None = None):
     if panel["plot_type"] != "horizontal_map":
         raise NotImplementedError(f"Unsupported plot_type: {panel['plot_type']}")
     proj_cfg = panel["projection"]
@@ -2568,6 +3355,16 @@ def _render_horizontal_map(fig, panel: dict, datasets: dict[str, xr.Dataset],
                 linewidth=box.get("linewidth", 1.5),
                 linestyle=box.get("linestyle", "solid"),
                 transform=ccrs.PlateCarree())
+
+    # 同じ図の鉛直断面パネルの経路 (map.section_paths。scriptgen.map_panel と 1 対 1)。
+    # 線は box と同じ zorder 2 (陸を前景に描いても隠れない)、端点の文字は 3
+    for item, s_lon, s_lat in section_overlay_items(panel, figure_config, datasets):
+        ax.plot(s_lon, s_lat, transform=ccrs.PlateCarree(), zorder=2,
+                **section_overlay_kwargs(item))
+        for lx, ly, text, ha in section_overlay_label_specs(item, s_lon, s_lat):
+            ax.text(lx, ly, text, transform=ccrs.PlateCarree(), ha=ha, va="center",
+                    fontsize=float(item.get("label_fontsize", 10)),
+                    color=item.get("color") or "black", zorder=3)
 
     # 図の枠線 (cartopy の "geo" spine。円形・扇形境界にも適用される)
     if map_cfg.get("frame_width") is not None:
@@ -2802,10 +3599,32 @@ def _render_section_2d(fig, panel: dict, datasets: dict[str, xr.Dataset],
     _apply_tick_settings(ax, axis_cfg)
     _apply_invert_and_limits(ax, axis_cfg, limits=False)
 
+    # 地形マスク: 軸の範囲 (対数・反転を含む) が決まった後に、地面より下を塗った多角形を
+    # 全レイヤーの上に重ねる (scriptgen.section_panel と 1 対 1)
+    terrain = section_terrain_ground(panel, datasets)
+    if terrain is not None:
+        tx, tground, tpressure = terrain
+        draw_section_terrain(ax, tx, tground, tpressure,
+                             (panel.get("terrain") or {}).get("color") or "#808080",
+                             TERRAIN_ZORDER)
+
     # 経度軸の東経・西経表記。カスタム目盛ラベル (FixedFormatter) 指定時は
     # そちらを優先する
     if axis_cfg.get("x_lon_east_west") and not axis_cfg.get("x_tick_labels"):
         ax.xaxis.set_major_formatter(mticker.FuncFormatter(_lon_ew_label))
+    # 目盛に経緯度を併記 (格子線断面の格子番号軸・大円断面の距離軸)。求められない
+    # 断面では何もしない。scriptgen.section_panel と 1 対 1
+    if axis_cfg.get("x_lonlat_ticks") and not axis_cfg.get("x_tick_labels"):
+        ref = section_x_lonlat(panel, datasets)
+        if ref is not None:
+            if not (axis_cfg.get("x_tick_positions") or axis_cfg.get("x_tick_interval")):
+                # 3 段のラベルは幅を取るので、軸の幅 (インチ) に応じて目盛を 3〜6 個に抑える
+                # (1 インチに 1 個の目安。scriptgen も同じ式を出す)
+                _w_in = ax.get_position().width * fig.get_figwidth()
+                ax.xaxis.set_major_locator(
+                    mticker.MaxNLocator(nbins=int(np.clip(_w_in / 1.0, 3, 6))))
+            ax.xaxis.set_major_formatter(mticker.FuncFormatter(
+                lambda v, pos=None, _r=ref: lonlat_tick_label(v, *_r)))
 
     fmt = axis_cfg.get("time_axis_format")
     if fmt:
@@ -2842,7 +3661,8 @@ def _section_data(panel: dict, layer: dict, variable: str, datasets: dict,
     selection = {**(panel.get("selection") or {}), **(layer.get("selection") or {})}
     return select_section_data(ds, variable, selection,
                                panel.get("ranges"), panel["x_dim"], panel["y_dim"],
-                               averages=layer.get("averages"), record=record)
+                               averages=layer.get("averages"), record=record,
+                               path=panel.get("section_path"))
 
 
 def _maskout_mask_data(panel: dict, layer: dict, datasets: dict, section: bool):
@@ -2931,9 +3751,12 @@ def _hatch_artist(ax, da, xname: str, yname: str, style: dict, **extra_kw):
         )
 
 
-def _contour_artist(fig, ax, da, xname: str, yname: str, style: dict, **extra_kw):
+def _contour_artist(fig, ax, da, xname: str, yname: str, style: dict,
+                    label_zorder=None, **extra_kw):
     """等値線の描画 + 線種・強調・ラベル・カラーバー (地図・断面共通)。
-    scriptgen._contour_call_lines と1対1対応。カラーバーを返す (無ければ None)。"""
+    scriptgen._contour_call_lines と1対1対応。カラーバーを返す (無ければ None)。
+    label_zorder は地形マスクのある断面でラベル (既定 zorder 4) を地面の多角形の下に
+    置くための値 (None = 既定のまま)。"""
     levels = contour_levels(style)
     kwargs = dict(contour_kwargs(style))
     if levels is not None:
@@ -2943,9 +3766,12 @@ def _contour_artist(fig, ax, da, xname: str, yname: str, style: dict, **extra_kw
     apply_contour_emphasis(cs, style)
     labels_cfg = style.get("labels", {})
     if labels_cfg.get("show"):
-        ax.clabel(cs, contour_label_levels(style, cs.levels),
-                  fontsize=labels_cfg.get("fontsize", 8),
-                  fmt=labels_cfg.get("fmt", "%g"))
+        texts = ax.clabel(cs, contour_label_levels(style, cs.levels),
+                          fontsize=labels_cfg.get("fontsize", 8),
+                          fmt=labels_cfg.get("fmt", "%g"))
+        if label_zorder is not None:
+            for _t in texts:
+                _t.set_zorder(label_zorder)
     # colorbar キーは新スキーマのみが持つ (旧設定は従来どおりカラーバーなし)
     if style.get("use_cmap") and "colorbar" in style:
         return _add_colorbar(fig, ax, cs, style.get("colorbar", {}))
@@ -3014,7 +3840,10 @@ def _draw_hatch_section(ax, panel: dict, layer: dict, datasets: dict):
 def _draw_contour_section(fig, ax, panel: dict, layer: dict, datasets: dict):
     da = _section_data(panel, layer, layer["variable"], datasets)
     da = _transform_and_mask(da, panel, layer, datasets, section=True)
-    _contour_artist(fig, ax, da, panel["x_dim"], panel["y_dim"], layer["style"])
+    # 地形マスクのある断面では、地下の等値線ラベルが地面の上に浮かないよう
+    # ラベルを多角形の下に置く
+    _contour_artist(fig, ax, da, panel["x_dim"], panel["y_dim"], layer["style"],
+                    label_zorder=(TERRAIN_ZORDER - 0.1 if terrain_enabled(panel) else None))
 
 
 def _draw_vector_section(fig, ax, panel: dict, layer: dict, datasets: dict):
@@ -3030,7 +3859,9 @@ def _draw_vector_section(fig, ax, panel: dict, layer: dict, datasets: dict):
         *args,
         **{**vector_kwargs(style), **norm_kw},
     )
-    _finish_vector(fig, ax, q, style, norm_kw)
+    # 地形マスクの多角形の上に基準ベクトルを出す (地図の「陸をデータの上に描く」と同じ扱い)
+    _finish_vector(fig, ax, q, style, norm_kw,
+                   key_zorder=(TERRAIN_ZORDER + 0.1 if terrain_enabled(panel) else None))
 
 
 def twin_align_value(axis_cfg: dict):

@@ -32,6 +32,7 @@ import pytest
 import xarray as xr
 
 from climcanvas.core import config as mc_config
+from climcanvas.core import dataset as mc_dataset
 from climcanvas.core import render as mc_render
 from test_consistency import (_assert_app_and_script_match,
                               _assert_multi_dataset_match, _make_series_nc)
@@ -683,6 +684,152 @@ def test_fuzz_config_render_and_script_match(seed, sample_path, tmp_path):
         print(f"再現するには: CC_FUZZ_SEED={base} pytest "
               f"'tests/test_fuzz_configs.py::"
               f"test_fuzz_config_render_and_script_match[fuzz-{seed}]'")
+        print(json.dumps(cfg, ensure_ascii=False, indent=1))
+        raise
+
+
+# --- 経路断面 (section_path): 1 次元格子のサンプルで、経路の種類・端点・点数・目盛の併記を
+#     ランダムに。既存のファズ (上) とは別の抽選列なので既存の seed の config は変わらない ---
+
+_N_PATH_CASES = 6
+
+
+def _random_path_section_panel(rng: random.Random) -> dict:
+    panel = mc_config.default_section_panel()
+    panel["x_dim"], panel["y_dim"] = mc_render.SECTION_PATH_DIM, "level"
+    kind = rng.choice(["great_circle", "great_circle", "parallel", "meridian"])
+    npoints = rng.choice([None, rng.randint(12, 120)])
+    if kind == "great_circle":
+        lon0 = rng.uniform(0.0, 360.0)
+        spec = {"kind": kind, "start": [round(lon0, 1), round(rng.uniform(-60.0, 60.0), 1)],
+                "end": [round(lon0 + rng.uniform(20.0, 150.0), 1),
+                        round(rng.uniform(-60.0, 70.0), 1)], "npoints": npoints}
+    elif kind == "parallel":
+        lo = rng.uniform(-30.0, 300.0)
+        spec = {"kind": kind, "lat": round(rng.uniform(-70.0, 70.0), 1),
+                "lon_range": [round(lo, 1), round(lo + rng.uniform(15.0, 200.0), 1)],
+                "npoints": npoints}
+    else:
+        lo = rng.uniform(-80.0, 20.0)
+        spec = {"kind": kind, "lon": round(rng.uniform(0.0, 360.0), 1),
+                "lat_range": [round(lo, 1), round(lo + rng.uniform(15.0, 100.0), 1)],
+                "npoints": npoints}
+    panel["section_path"] = spec
+    panel["selection"] = {"time": "2024-01-01T06:00:00"}
+    panel["title"] = f"fuzz path section {kind}"
+    axis = panel["axis"]
+    _rand_axis_common(rng, axis)
+    axis["x_label"], axis["y_label"] = "path", "pressure"
+    axis["invert_y"] = True
+    axis["log_y"] = rng.random() < 0.5
+    axis["x_lonlat_ticks"] = rng.random() < 0.5
+    if kind == "parallel":
+        axis["x_lon_east_west"] = rng.random() < 0.5
+    _rand_ticks(rng, axis, "y", 100.0, 1000.0)
+    fill = mc_config.default_fill_layer("ds0", "t")
+    _rand_fill_style(rng, fill["style"], 200.0, 300.0)
+    # 別変数によるマスクは期待値の独立計算に入れていないので外す (閾値のマスクは入る)
+    for k in ("variable", "var_below", "var_above"):
+        (fill["style"].get("maskout") or {}).pop(k, None)
+    panel["layers"] = [fill]
+    if rng.random() < 0.5:
+        contour = mc_config.default_contour_layer("ds0", "z")
+        _rand_contour_style(rng, contour["style"], 0.0, 16000.0)
+        panel["layers"].append(contour)
+    if rng.random() < 0.4:
+        vec = mc_config.default_vector_layer("ds0", "u", "v")
+        vec["style"]["stride_x"] = rng.randint(2, 6)
+        panel["layers"].append(vec)
+    return panel
+
+
+def _expected_path_fill_array(ds, panel: dict, layer: dict) -> "np.ndarray":
+    """経路断面の fill の期待配列を独立に計算する (render の関数を使わない)。
+
+    1 次元格子: 経路の点の格子番号を np.interp で求め (経度は格子の規約に写し、全球なら
+    最後の列の次を先頭の列として扱う)、周りの 4 点の双一次内挿。経路の点そのものは
+    great_circle_points (球面線形補間) を使う — これは test_section_path で独立に検証済み。
+    """
+    spec = mc_render.section_path_spec(panel["section_path"], ds)
+    n = spec["npoints"]
+    if spec["kind"] == "parallel":
+        plon = np.linspace(*spec["lon_range"], n)
+        plat = np.full(n, spec["lat"])
+    elif spec["kind"] == "meridian":
+        plat = np.linspace(*spec["lat_range"], n)
+        plon = np.full(n, spec["lon"])
+    else:
+        plon, plat, _ = mc_render.great_circle_points(spec["start"], spec["end"], n)
+    da = ds[layer["variable"]].sel(time=panel["selection"]["time"])
+    lat = ds["lat"].values.astype(float)
+    lon = ds["lon"].values.astype(float)
+    fj = np.interp(plat, lat, np.arange(lat.size), left=np.nan, right=np.nan)
+    lonw = (plon - lon.min()) % 360.0 + lon.min()
+    lon_ext = np.append(lon, lon[0] + 360.0)          # 全球格子: 最後の次は先頭
+    fi = np.interp(lonw, lon_ext, np.arange(lon_ext.size), left=np.nan, right=np.nan)
+    vals = da.transpose("level", "lat", "lon").values.astype(float)
+    out = np.full((vals.shape[0], n), np.nan)
+    for k in range(n):
+        if not (np.isfinite(fj[k]) and np.isfinite(fi[k])):
+            continue
+        j0 = min(int(np.floor(fj[k])), lat.size - 2)
+        a = fj[k] - j0
+        i0 = int(np.floor(fi[k])) % lon.size
+        b = fi[k] - np.floor(fi[k])
+        i1 = (i0 + 1) % lon.size
+        out[:, k] = ((1 - a) * (1 - b) * vals[:, j0, i0] + (1 - a) * b * vals[:, j0, i1]
+                     + a * (1 - b) * vals[:, j0 + 1, i0] + a * b * vals[:, j0 + 1, i1])
+    style = layer["style"]
+    out = out * style.get("value_scale", 1.0) + style.get("value_offset", 0.0)
+    mo = style.get("maskout") or {}
+    if mo.get("below") is not None:
+        out = np.where(out <= float(mo["below"]), np.nan, out)
+    if mo.get("above") is not None:
+        out = np.where(out >= float(mo["above"]), np.nan, out)
+    return out
+
+
+@pytest.mark.parametrize("seed", range(_N_PATH_CASES),
+                         ids=[f"pfuzz-{i}" for i in range(_N_PATH_CASES)])
+def test_fuzz_section_path_render_and_script_match(seed, sample_path, tmp_path):
+    """経路断面のファズ: render ⇄ scriptgen の画素一致と、fill の描画配列 = 独立計算の
+    双一次内挿 (経路の全点が格子の外なら明示エラーで終わる)。"""
+    base = _seed_base()
+    rng = random.Random(base + 7000 + seed)
+    cfg = mc_config.default_figure_config()
+    cfg["panels"] = [_random_path_section_panel(rng)]
+    ds = mc_dataset.open_dataset(sample_path)
+    try:
+        try:
+            expected = _expected_path_fill_array(ds, cfg["panels"][0], cfg["panels"][0]["layers"][0])
+        except Exception:
+            expected = None
+        if expected is not None and not np.isfinite(expected).any():
+            with pytest.raises(mc_render.RenderError) as ei:
+                mc_render.render_figure(cfg, {"ds0": ds})
+            assert ei.value.msg_id == "section_path_outside_grid"
+            return
+        _assert_app_and_script_match(cfg, sample_path, tmp_path)
+        fig = mc_render.render_figure(cfg, {"ds0": ds})
+        layer = cfg["panels"][0]["layers"][0]
+        if layer["style"].get("method") == "pcolormesh":
+            from matplotlib.collections import QuadMesh
+            qm = [c for c in fig.axes[0].collections if isinstance(c, QuadMesh)][0]
+            got = np.asarray(np.ma.filled(qm.get_array(), np.nan), dtype=float).reshape(expected.shape)
+            np.testing.assert_allclose(got, expected, rtol=1e-5, equal_nan=True)
+        else:
+            da = mc_render.select_section_data(
+                ds, layer["variable"], cfg["panels"][0]["selection"], None,
+                mc_render.SECTION_PATH_DIM, "level", path=cfg["panels"][0]["section_path"])
+            got = mc_render.apply_maskout(mc_render.apply_value_transform(da, layer["style"]),
+                                          layer["style"], None).values.astype(float)
+            np.testing.assert_allclose(got, expected, rtol=1e-5, equal_nan=True)
+        plt.close(fig)
+    except Exception:
+        print(f"--- failing path-section fuzz config (seed={seed}) ---")
+        print(f"再現するには: CC_FUZZ_SEED={base} pytest "
+              f"'tests/test_fuzz_configs.py::"
+              f"test_fuzz_section_path_render_and_script_match[pfuzz-{seed}]'")
         print(json.dumps(cfg, ensure_ascii=False, indent=1))
         raise
 

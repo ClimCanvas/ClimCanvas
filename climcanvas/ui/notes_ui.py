@@ -99,6 +99,17 @@ def _body(note: dict) -> str:
         return t("|V| が {v} 以下のベクトルを描かない", v=fmt_num(note["value"]))
     if kind == "vector_no_rotation":
         return t("2 次元座標格子: 成分を東西・南北とみなして描く (格子相対風の回転なし)")
+    if kind == "section_vector_components":
+        return t("断面のベクトル・流線の成分は選んだ変数のまま (断面方向への射影はしない)")
+    if kind == "section_path":
+        return _section_path_line(note)
+    if kind == "terrain_mask":
+        return _terrain_line(note)
+    if kind == "section_grid_line":
+        return t("格子線に沿う断面 ({dim} = {v}: 緯度 {lat0}〜{lat1}°N、経度 {lon0}〜{lon1}°E)、内挿なし",
+                 dim=note["fixed_dim"], v=fmt_num(note["fixed_value"]),
+                 lat0=f"{note['lat_range'][0]:.1f}", lat1=f"{note['lat_range'][1]:.1f}",
+                 lon0=f"{note['lon_range'][0]:.1f}", lon1=f"{note['lon_range'][1]:.1f}")
     if kind == "average_missing":
         return t("平均範囲内の欠損 {n} / {total} 要素 (平均から除外)",
                  n=note["n_nan"], total=note["n_total"])
@@ -109,6 +120,46 @@ def _body(note: dict) -> str:
              what=t(_AVG_ROLE_LABELS[role]), dim=note["dim"],
              lo=fmt_num(lo), hi=fmt_num(hi),
              op=t(_AVG_OP_LABELS.get(op, op)), n=note["n_points"])
+
+
+def _section_path_line(note: dict) -> str:
+    """経路断面の 1 行: 経路の種類と位置、点数・点の間隔・格子間隔、双一次内挿。"""
+    spec = note["spec"]
+    n = note["npoints"]
+    common = t("{n} 点、点の間隔 約 {step} km (格子間隔 約 {grid} km)、周りの 4 格子点から双一次内挿",
+               n=n, step=f"{note['length_km'] / max(n - 1, 1):.1f}",
+               grid=f"{note['spacing_km']:.1f}")
+    kind = note["path_kind"]
+    if kind == "parallel":
+        head = t("等緯度線 {lat}°N に沿う断面 (経度 {lo}〜{hi})",
+                 lat=fmt_num(spec["lat"]), lo=fmt_num(spec["lon_range"][0]),
+                 hi=fmt_num(spec["lon_range"][1]))
+    elif kind == "meridian":
+        head = t("等経度線 {lon}°E に沿う断面 (緯度 {lo}〜{hi})",
+                 lon=fmt_num(spec["lon"]), lo=fmt_num(spec["lat_range"][0]),
+                 hi=fmt_num(spec["lat_range"][1]))
+    else:
+        head = t("大円に沿う断面 ({lon1}, {lat1}) → ({lon2}, {lat2})、長さ {length} km",
+                 lon1=fmt_num(spec["start"][0]), lat1=fmt_num(spec["start"][1]),
+                 lon2=fmt_num(spec["end"][0]), lat2=fmt_num(spec["end"][1]),
+                 length=f"{note['length_km']:.0f}")
+    return f"{head}: {common}"
+
+
+_TERRAIN_METHOD_LABELS = {"surface_pressure": "地上気圧", "surface_height": "地形高度",
+                          "height_field": "高度の変数と地形高度"}
+
+
+def _terrain_line(note: dict) -> str:
+    """地形マスクの 1 行: 方法と変数、覆うだけで欠損にしないこと、自動範囲の注意。"""
+    units = note.get("units") or {}
+    names = ", ".join(f"`{v}`" + (f" [{units[v]}]" if units.get(v) else "")
+                      for v in note.get("variables") or [])
+    text = t("地形マスク: 地面より下もデータの値のまま描き、{method} ({vars}) から求めた地面で覆う (欠損にはしない)",
+             method=t(_TERRAIN_METHOD_LABELS.get(note["method"], note["method"])), vars=names)
+    if note.get("auto_color_range"):
+        text += t("。色の自動範囲には地面より下の値も含まれる")
+    return text
 
 
 def format_notes(notes: list[dict]) -> str:
@@ -132,6 +183,8 @@ def format_notes(notes: list[dict]) -> str:
             if note["type"] == "axis_units_mixed":
                 # パネル単位の項目 (レイヤーに属さない)。軸ごとに 1 行
                 key = ("axis", note.get("value_axis"))
+            elif note["type"] in ("section_path", "section_grid_line", "terrain_mask"):
+                key = ("section", note["type"])
             else:
                 key = (note.get("layer_index"), tuple(note.get("variables") or ()),
                        note.get("axis"))
@@ -139,6 +192,8 @@ def format_notes(notes: list[dict]) -> str:
         for group in groups.values():
             if group[0]["type"] == "axis_units_mixed":
                 lines.append(f"- {_axis_mixed_line(group[0])}")
+            elif group[0]["type"] in ("section_path", "section_grid_line", "terrain_mask"):
+                lines.append(f"- {_body(group[0])}")
             elif len(group) == 1:
                 lines.append(f"- {_head(group[0])}: {_body(group[0])}")
             else:

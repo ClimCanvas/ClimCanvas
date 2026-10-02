@@ -95,8 +95,36 @@ def create_sample_dataset(path: str) -> xr.Dataset:
     return ds
 
 
+def create_terrain_dataset(path: str) -> xr.Dataset:
+    """sample_atmos と同じ 2.5° 格子の地表の変数 (地形マスクの確認用)。
+
+    地形高度 zs [m] はチベット (90°E 32°N、4500 m) とロッキー (250°E 42°N、2500 m) の
+    ガウス型の山、地上気圧 ps [hPa] = 1000 × exp(−zs / 8000 m)。
+    """
+    lats = np.arange(-90.0, 90.01, 2.5)
+    lons = np.arange(0.0, 360.0, 2.5)
+    lon2, lat2 = np.meshgrid(lons, lats)
+    zs = (4500.0 * np.exp(-((lon2 - 90.0) ** 2 / 200.0 + (lat2 - 32.0) ** 2 / 40.0))
+          + 2500.0 * np.exp(-((lon2 - 250.0) ** 2 / 60.0 + (lat2 - 42.0) ** 2 / 120.0)))
+    ps = 1000.0 * np.exp(-zs / 8000.0)
+    ds = xr.Dataset(
+        {"zs": (("lat", "lon"), zs.astype(np.float32),
+                {"units": "m", "long_name": "terrain height"}),
+         "ps": (("lat", "lon"), ps.astype(np.float32),
+                {"units": "hPa", "long_name": "surface pressure"})},
+        coords={"lat": ("lat", lats, {"units": "degrees_north", "long_name": "latitude"}),
+                "lon": ("lon", lons, {"units": "degrees_east", "long_name": "longitude"})},
+        attrs={"title": "ClimCanvas synthetic terrain (zs, ps) on the sample_atmos grid"})
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    ds.to_netcdf(path)
+    return ds
+
+
 if __name__ == "__main__":
     out = sys.argv[1] if len(sys.argv) > 1 else "data/sample/sample_atmos.nc"
     ds = create_sample_dataset(out)
     print(f"生成しました: {out}")
     print(ds)
+    terrain = os.path.join(os.path.dirname(out), "sample_terrain.nc")
+    print(create_terrain_dataset(terrain))
+    print(f"生成しました: {terrain}")

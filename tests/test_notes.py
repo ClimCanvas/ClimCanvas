@@ -498,3 +498,90 @@ def test_line_axis_units_mixed_stackplot_and_unknown_units():
     assert _by_type(mc_notes.collect_notes(
         _figure(panel(mc_config.default_line_layer("ds0", "a"), hbar)), dss),
         "axis_units_mixed") == []
+
+
+# --- 鉛直断面の経路 (section_path / 格子線) ---
+
+def _section_panel(dsid, x_dim, section_path=None, selection=None, vector=False):
+    panel = mc_config.default_section_panel()
+    panel["x_dim"] = x_dim
+    panel["y_dim"] = "lev" if dsid == "dsc" else "level"
+    panel["section_path"] = section_path
+    panel["selection"] = {"time": _T0, **(selection or {})}
+    panel["layers"] = [mc_config.default_fill_layer(dsid, "t")]
+    if vector:
+        panel["layers"].append(mc_config.default_vector_layer(dsid, "u", "v"))
+    return panel
+
+
+def test_section_path_and_grid_line_entries(datasets, curvilinear_sample_path):
+    """経路断面はパネル単位の項目 (種類・点数・経路長・格子間隔)、2 次元座標格子の
+    格子線断面は固定した行・列と経緯度の範囲、大円・格子線のベクトルは成分の注記。
+    1 次元格子の従来の断面には何も出ない。"""
+    dsets = {**datasets, "dsc": mc_dataset.open_dataset(curvilinear_sample_path)}
+    # 従来の断面 (1 次元格子、固定緯度): 注記なし
+    assert mc_notes.collect_notes(
+        _figure(_section_panel("ds0", "lon", selection={"lat": 35.0})), dsets) == []
+
+    # 等緯度線 (2 次元座標格子): section_path 1 件、ベクトル成分の注記は出ない
+    path = {"kind": "parallel", "lat": 38.0, "lon_range": [120.0, 160.0], "npoints": None}
+    notes = mc_notes.collect_notes(
+        _figure(_section_panel("dsc", "path", path, vector=True)), dsets)
+    kinds = [n["type"] for n in notes]
+    assert kinds == ["vector_no_rotation", "section_path"]
+    sp = notes[-1]
+    assert sp["layer_index"] is None and sp["path_kind"] == "parallel"
+    assert sp["npoints"] > 2 and sp["length_km"] > 0 and sp["spacing_km"] == pytest.approx(101.1, abs=1.0)
+    text = format_notes(notes)
+    assert "等緯度線 38°N に沿う断面" in text and "双一次内挿" in text
+
+    # 大円 (1 次元格子): section_path + ベクトル成分の注記 (レイヤー単位)
+    gc = {"kind": "great_circle", "start": [100.0, 20.0], "end": [220.0, 60.0], "npoints": 40}
+    notes = mc_notes.collect_notes(_figure(_section_panel("ds0", "path", gc, vector=True)), dsets)
+    assert [n["type"] for n in notes] == ["section_path", "section_vector_components"]
+    assert notes[0]["npoints"] == 40
+    assert notes[1]["layer_index"] == 1 and notes[1]["variables"] == ["u", "v"]
+    text = format_notes(notes)
+    assert "大円に沿う断面 (100, 20) → (220, 60)" in text and "射影はしない" in text
+
+    # 格子の列 (2 次元座標格子): 固定した列と経緯度の範囲、ベクトル成分の注記
+    notes = mc_notes.collect_notes(
+        _figure(_section_panel("dsc", "y", selection={"x": 30.0}, vector=True)), dsets)
+    assert [n["type"] for n in notes] == ["vector_no_rotation", "section_grid_line",
+                                          "section_vector_components"]
+    gl = notes[1]
+    assert gl["fixed_dim"] == "x" and gl["fixed_value"] == 30.0
+    assert gl["lat_range"][0] < gl["lat_range"][1]
+    assert "格子線に沿う断面 (x = 30" in format_notes(notes)
+
+    # 経路が壊れている (対蹠点) ときは注記を出さない (描画側でエラーになる)
+    bad = {"kind": "great_circle", "start": [0.0, 0.0], "end": [180.0, 0.0], "npoints": 5}
+    assert mc_notes.collect_notes(_figure(_section_panel("ds0", "path", bad)), dsets) == []
+
+
+def test_terrain_mask_entry(datasets, curvilinear_sample_path, curvilinear_terrain_path):
+    """地形マスクの注記: 方法と変数 (別データセットの units 付き)、色の自動範囲の注意は
+    vmin / vmax 未指定の塗りがあるときだけ。設定が壊れていれば出さない。"""
+    dsets = {**datasets, "dsc": mc_dataset.open_dataset(curvilinear_sample_path),
+             "dst": mc_dataset.open_dataset(curvilinear_terrain_path)}
+    path = {"kind": "parallel", "lat": 36.0, "lon_range": [120.0, 160.0], "npoints": 30}
+    panel = _section_panel("dsc", "path", path)
+    panel["terrain"] = {**mc_config.default_section_panel()["terrain"], "show": True,
+                        "method": "height_field", "dataset_id": "dst", "variable": "zs",
+                        "height_dataset_id": "dsc", "height_variable": "z"}
+    notes = mc_notes.collect_notes(_figure(panel), dsets)
+    assert [n["type"] for n in notes] == ["section_path", "terrain_mask"]
+    tm = notes[1]
+    assert tm["variables"] == ["zs", "z"] and tm["units"] == {"zs": "m", "z": "m"}
+    assert tm["auto_color_range"] is True
+    text = format_notes(notes)
+    assert "地形マスク" in text and "高度の変数と地形高度 (`zs` [m], `z` [m])" in text
+    assert "色の自動範囲" in text
+    # 色の範囲を指定すると注意は消える
+    panel["layers"][0]["style"].update({"vmin": 200.0, "vmax": 300.0})
+    notes = mc_notes.collect_notes(_figure(panel), dsets)
+    assert notes[1]["auto_color_range"] is False
+    assert "色の自動範囲" not in format_notes(notes)
+    # 壊れた設定 (単位が合わない) は注記なし
+    panel["terrain"].update({"method": "surface_pressure", "variable": "zs"})
+    assert [n["type"] for n in mc_notes.collect_notes(_figure(panel), dsets)] == ["section_path"]

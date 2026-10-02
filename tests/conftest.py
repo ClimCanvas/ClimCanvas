@@ -28,9 +28,10 @@ _os.environ["CLIMCANVAS_PRESET_PATH"] = str(Path(_isolated) / "preset.json")
 
 import pytest
 
-from scripts.make_sample_data import create_sample_dataset
+from scripts.make_sample_data import create_sample_dataset, create_terrain_dataset
 from scripts.make_sample_track_data import create_track_dataset
-from scripts.make_sample_curvilinear_data import create_curvilinear_dataset
+from scripts.make_sample_curvilinear_data import (create_curvilinear_dataset,
+                                                  create_curvilinear_terrain)
 
 
 @pytest.fixture(scope="session")
@@ -46,9 +47,25 @@ def _curvilinear_files(tmp_path_factory) -> dict[str, str]:
     d = tmp_path_factory.mktemp("data")
     paths = {"embedded": str(d / "sample_curvilinear.nc"),
              "bare": str(d / "sample_curvilinear_bare.nc"),
-             "lonlat": str(d / "sample_curvilinear_lonlat.nc")}
+             "lonlat": str(d / "sample_curvilinear_lonlat.nc"),
+             "terrain": str(d / "sample_curvilinear_terrain.nc")}
     create_curvilinear_dataset(paths["embedded"], paths["bare"], paths["lonlat"])
+    create_curvilinear_terrain(paths["terrain"])
     return paths
+
+
+@pytest.fixture(scope="session")
+def terrain_sample_path(tmp_path_factory) -> str:
+    """sample_atmos と同じ格子の地表変数 (zs [m] / ps [hPa]) — 地形マスク用。"""
+    path = tmp_path_factory.mktemp("data") / "sample_terrain.nc"
+    create_terrain_dataset(str(path))
+    return str(path)
+
+
+@pytest.fixture(scope="session")
+def curvilinear_terrain_path(_curvilinear_files) -> str:
+    """curvilinear サンプルと同じ格子の地表変数 (zs [m] / ps [Pa]) — 地形マスク用。"""
+    return _curvilinear_files["terrain"]
 
 
 @pytest.fixture(scope="session")

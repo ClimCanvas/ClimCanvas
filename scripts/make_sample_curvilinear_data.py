@@ -119,6 +119,39 @@ def create_curvilinear_dataset(path: str, bare_path: str | None = None,
     return ds
 
 
+def create_curvilinear_terrain(path: str) -> xr.Dataset:
+    """同じランベルト格子の地表の変数 (地形マスクの確認用): 地形高度 zs [m] と地上気圧 ps [Pa]。
+
+    山は 2 つ (138°E 36°N に 1800 m、128°E 33°N に 600 m のガウス型)。ps は
+    1000 hPa × exp(−zs / 8000 m) を Pa で持ち、単位の換算 (Pa → hPa) の確認に使う。
+    経緯度は本体と同じく 2 次元座標として埋め込む。
+    """
+    lon2d, lat2d = lcc_lonlat()
+    zs = (1800.0 * np.exp(-((lon2d - 138.0) ** 2 / 32.0 + (lat2d - 36.0) ** 2 / 18.0))
+          + 600.0 * np.exp(-((lon2d - 128.0) ** 2 / 18.0 + (lat2d - 33.0) ** 2 / 8.0)))
+    ps = 1000.0e2 * np.exp(-zs / 8000.0)
+    coords = {
+        "y": ("y", np.arange(1, NY + 1, dtype=np.float32),
+              {"long_name": "y grid number", "units": ""}),
+        "x": ("x", np.arange(1, NX + 1, dtype=np.float32),
+              {"long_name": "x grid number", "units": ""}),
+        "lon": (("y", "x"), lon2d.astype(np.float32),
+                {"units": "degrees_east", "long_name": "longitude"}),
+        "lat": (("y", "x"), lat2d.astype(np.float32),
+                {"units": "degrees_north", "long_name": "latitude"}),
+    }
+    ds = xr.Dataset(
+        {"zs": (("y", "x"), zs.astype(np.float32),
+                {"units": "m", "long_name": "terrain height"}),
+         "ps": (("y", "x"), ps.astype(np.float32),
+                {"units": "Pa", "long_name": "surface pressure"})},
+        coords=coords,
+        attrs={"title": "ClimCanvas synthetic curvilinear terrain (zs, ps)"})
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    ds.to_netcdf(path)
+    return ds
+
+
 if __name__ == "__main__":
     out_dir = sys.argv[1] if len(sys.argv) > 1 else "data/sample"
     ds = create_curvilinear_dataset(
@@ -126,3 +159,4 @@ if __name__ == "__main__":
         os.path.join(out_dir, "sample_curvilinear_bare.nc"),
         os.path.join(out_dir, "sample_curvilinear_lonlat.nc"))
     print(ds)
+    print(create_curvilinear_terrain(os.path.join(out_dir, "sample_curvilinear_terrain.nc")))

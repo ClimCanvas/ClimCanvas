@@ -12,6 +12,7 @@ AST でリテラルとして読むので、リテラル代入のまま維持す�
 """
 
 import os
+import re as _re
 
 import streamlit as st
 
@@ -287,6 +288,29 @@ def _migrate_legacy_value(key, value):
     return value
 
 
+_CLON_FOLLOW_KEY = _re.compile(r"^central_lon_(?P<mode>[A-Za-z]+\d+)_(?P<proj>Robinson|EqualEarth)$")
+
+
+def _migrate_loaded_session(loaded: dict) -> dict:
+    """読み込んだセッション/プリセットの辞書に、後から増えた key の互換値を補う。
+
+    すべての復元経路で、個々の値を session_state へ書く前に通すこと (値の変換は
+    `_migrate_legacy_value`、ここは「他の key の有無で決まる補い」)。
+    - Robinson / EqualEarth の「中心経度を範囲の中央に合わせる」(`clon_follow_*`、
+      2026-10-02 追加、既定 ON) が無く、中心経度の入力値 (`central_lon_*`) が保存されて
+      いる旧セッションは、追従を OFF にして保存時の中心経度のまま描く (既定の ON を
+      適用すると図が変わる)
+    """
+    out = dict(loaded)
+    for key in loaded:
+        m = _CLON_FOLLOW_KEY.match(key)
+        if m:
+            follow_key = f"clon_follow_{m['mode']}_{m['proj']}"
+            if follow_key not in loaded:
+                out[follow_key] = False
+    return out
+
+
 def _serialize_session() -> dict:
     """作業状態 (session_state 全体) を JSON 互換 dict にする。"""
     out = {}
@@ -345,7 +369,8 @@ def _load_startup_preset_once():
         return
     import json as _json
     try:
-        loaded = _json.loads(STARTUP_PRESET_PATH.read_text(encoding="utf-8"))
+        loaded = _migrate_loaded_session(
+            _json.loads(STARTUP_PRESET_PATH.read_text(encoding="utf-8")))
         applied = 0
         for k, v in loaded.items():
             # _PRESET_ONLY_KEYS (UI 言語) はセッション除外だがプリセットでは復元する
@@ -440,7 +465,7 @@ def _load_session_from_disk(directory: str, name: str) -> int:
     path = _session_path(directory, name)
     if not path.is_file():
         return 0
-    loaded = _json.loads(path.read_text(encoding="utf-8"))
+    loaded = _migrate_loaded_session(_json.loads(path.read_text(encoding="utf-8")))
     applied = 0
     for k, v in loaded.items():
         if _is_session_excluded(k):

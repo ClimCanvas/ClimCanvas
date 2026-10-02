@@ -3131,6 +3131,51 @@ def _vsection_stream_config():
     return cfg
 
 
+def _vsection_great_circle_config():
+    """1 次元格子 (sample_atmos) の大円断面: 横軸は距離 (km)、目盛に経緯度を併記、
+    自動の点数、レベル範囲、塗り + 等値線 (ラベル付き) + ベクトル (間引き)。"""
+    panel = mc_config.default_section_panel()
+    panel["x_dim"] = mc_render.SECTION_PATH_DIM
+    panel["y_dim"] = "level"
+    panel["section_path"] = {"kind": "great_circle", "start": [100.0, 20.0],
+                             "end": [220.0, 60.0], "npoints": None}
+    panel["selection"] = {"time": "2024-01-01T06:00:00"}
+    panel["ranges"] = {"level": [1000.0, 200.0]}
+    panel["axis"].update({"invert_y": True, "x_lonlat_ticks": True,
+                          "x_label": "distance (km)"})
+    panel["title"] = "great-circle section (1-D grid)"
+    fill = mc_config.default_fill_layer("ds0", "t")
+    fill["style"].update({"cmap": "coolwarm", "vmin": 200.0, "vmax": 300.0, "levels": 11})
+    cont = mc_config.default_contour_layer("ds0", "z")
+    cont["style"]["labels"] = {"show": True, "fontsize": 7, "fmt": "%g"}
+    vec = mc_config.default_vector_layer("ds0", "u", "v")
+    vec["style"].update({"stride_x": 3, "stride_y": 1})
+    panel["layers"] = [fill, cont, vec]
+    cfg = mc_config.default_figure_config()
+    cfg["panels"] = [panel]
+    return cfg
+
+
+def _vsection_great_circle_dateline_config():
+    """全球 1 次元格子で日付変更線をまたぐ大円断面 (継ぎ目をまたいで内挿、wrap_x):
+    点数を明示、pcolormesh + ハッチ、経緯度の併記なし。"""
+    panel = mc_config.default_section_panel()
+    panel["x_dim"] = mc_render.SECTION_PATH_DIM
+    panel["y_dim"] = "level"
+    panel["section_path"] = {"kind": "great_circle", "start": [150.0, 20.0],
+                             "end": [-150.0, 50.0], "npoints": 40}
+    panel["selection"] = {"time": "2024-01-01T06:00:00"}
+    panel["axis"].update({"invert_y": True, "log_y": True})
+    fill = mc_config.default_fill_layer("ds0", "t")
+    fill["style"].update({"method": "pcolormesh", "cmap": "viridis"})
+    hatch = mc_config.default_hatch_layer("ds0", "z")
+    hatch["style"]["levels"] = [5000.0, 6000.0]
+    panel["layers"] = [fill, hatch]
+    cfg = mc_config.default_figure_config()
+    cfg["panels"] = [panel]
+    return cfg
+
+
 def _vsection_maskout_config():
     """鉛直断面の maskout: fill と contour に閾値マスク。"""
     panel = mc_config.default_section_panel()
@@ -3255,6 +3300,7 @@ def _maskout_var_config():
     _contour_cbar_extend_config,
     _zero_white_fill_map_config, _zero_white_vsection_pcolormesh_config,
     _zero_white_vector_cmap_config,
+    _vsection_great_circle_config, _vsection_great_circle_dateline_config,
 ], ids=["simple", "rich-layers", "land-foreground", "texts",
         "robinson", "equal-earth", "npolar", "npolar-sector", "orthographic",
         "ortho-contour-only", "neg-contour",
@@ -3307,7 +3353,8 @@ def _maskout_var_config():
         "vector-cmap", "bubble-cmap-discrete",
         "contour-cbar-extend",
         "zero-white-fill-map", "zero-white-vsection-pcolormesh",
-        "zero-white-vector-cmap"])
+        "zero-white-vector-cmap",
+        "vsection-great-circle", "vsection-great-circle-dateline"])
 def test_render_and_script_produce_identical_png(config_builder, sample_path, tmp_path):
     _assert_app_and_script_match(config_builder(), sample_path, tmp_path)
 
@@ -3411,20 +3458,271 @@ def _curvilinear_no_region_robinson_config():
     return cfg
 
 
+def _curvilinear_section_panel(x_dim, section_path=None, selection=None):
+    """2 次元座標格子の鉛直断面パネルの共通部分 (時刻固定、気圧軸を反転)。"""
+    panel = mc_config.default_section_panel()
+    panel["x_dim"] = x_dim
+    panel["y_dim"] = "lev"
+    panel["section_path"] = section_path
+    panel["selection"] = {"time": _CURVI_TIME, **(selection or {})}
+    panel["axis"]["invert_y"] = True
+    return panel
+
+
+def _curvilinear_section_parallel_config():
+    """等緯度線の経路断面 (横軸 = 経度、東経・西経表記): 塗り + 等値線 + ベクトル (間引き)。"""
+    panel = _curvilinear_section_panel(
+        mc_render.SECTION_PATH_DIM,
+        {"kind": "parallel", "lat": 38.0, "lon_range": [120.0, 160.0], "npoints": None})
+    panel["axis"].update({"x_lon_east_west": True, "log_y": True})
+    fill = mc_config.default_fill_layer("ds0", "t")
+    cont = mc_config.default_contour_layer("ds0", "z")
+    vec = mc_config.default_vector_layer("ds0", "u", "v")
+    vec["style"]["stride_x"] = 2
+    panel["layers"] = [fill, cont, vec]
+    cfg = mc_config.default_figure_config()
+    cfg["panels"] = [panel]
+    return cfg
+
+
+def _curvilinear_section_meridian_config():
+    """等経度線の経路断面 (横軸 = 緯度): pcolormesh + ハッチ + 流線、レベル範囲。"""
+    panel = _curvilinear_section_panel(
+        mc_render.SECTION_PATH_DIM,
+        {"kind": "meridian", "lon": 140.0, "lat_range": [22.0, 48.0], "npoints": None})
+    panel["ranges"] = {"lev": [1000.0, 300.0]}
+    fill = mc_config.default_fill_layer("ds0", "t")
+    fill["style"]["method"] = "pcolormesh"
+    hatch = mc_config.default_hatch_layer("ds0", "t")
+    hatch["style"]["levels"] = [270.0, 290.0]
+    stream = mc_config.default_stream_layer("ds0", "u", "v")
+    panel["layers"] = [fill, hatch, stream]
+    cfg = mc_config.default_figure_config()
+    cfg["panels"] = [panel]
+    return cfg
+
+
+def _curvilinear_section_great_circle_config():
+    """大円の経路断面 (横軸 = 距離 km、目盛に経緯度を併記、点数を明示): 塗り + 等値線 (ラベル)。"""
+    panel = _curvilinear_section_panel(
+        mc_render.SECTION_PATH_DIM,
+        {"kind": "great_circle", "start": [118.0, 27.0], "end": [160.0, 44.0],
+         "npoints": 60})
+    panel["axis"].update({"x_lonlat_ticks": True, "x_label": "distance (km)"})
+    fill = mc_config.default_fill_layer("ds0", "t")
+    fill["style"].update({"cmap": "coolwarm", "vmin": 210.0, "vmax": 290.0, "levels": 17})
+    cont = mc_config.default_contour_layer("ds0", "z")
+    cont["style"]["labels"] = {"show": True, "fontsize": 7, "fmt": "%g"}
+    panel["layers"] = [fill, cont]
+    cfg = mc_config.default_figure_config()
+    cfg["panels"] = [panel]
+    return cfg
+
+
+def _curvilinear_section_grid_row_config():
+    """格子線断面 (行 y = 25 に沿う、横軸 = 格子番号 x に経緯度を併記): 塗り + 等値線。
+    固定する行は従来どおり selection (内挿なし)。"""
+    panel = _curvilinear_section_panel("x", None, {"y": 25.0})
+    panel["axis"].update({"x_lonlat_ticks": True, "x_label": "x"})
+    fill = mc_config.default_fill_layer("ds0", "t")
+    cont = mc_config.default_contour_layer("ds0", "z")
+    panel["layers"] = [fill, cont]
+    cfg = mc_config.default_figure_config()
+    cfg["panels"] = [panel]
+    return cfg
+
+
+def _curvilinear_section_grid_col_config():
+    """格子線断面 (列 x = 30 に沿う、横軸 = 格子番号 y、併記なし): 塗り + ベクトル。"""
+    panel = _curvilinear_section_panel("y", None, {"x": 30.0})
+    fill = mc_config.default_fill_layer("ds0", "t")
+    vec = mc_config.default_vector_layer("ds0", "u", "v")
+    vec["style"]["stride_x"] = 3
+    panel["layers"] = [fill, vec]
+    cfg = mc_config.default_figure_config()
+    cfg["panels"] = [panel]
+    return cfg
+
+
 @pytest.mark.parametrize("config_builder", [
     _curvilinear_fill_contour_config,
     _curvilinear_pcolormesh_vector_scatter_config,
     _curvilinear_stream_hatch_config,
     _curvilinear_native_extent_config,
     _curvilinear_no_region_robinson_config,
+    _curvilinear_section_parallel_config,
+    _curvilinear_section_meridian_config,
+    _curvilinear_section_great_circle_config,
+    _curvilinear_section_grid_row_config,
+    _curvilinear_section_grid_col_config,
 ], ids=["curvilinear-fill-contour-lambert",
         "curvilinear-pcolormesh-vector-scatter",
         "curvilinear-stream-hatch",
         "curvilinear-native-extent-no-region",
-        "curvilinear-no-region-robinson"])
+        "curvilinear-no-region-robinson",
+        "curvilinear-section-parallel",
+        "curvilinear-section-meridian",
+        "curvilinear-section-great-circle",
+        "curvilinear-section-grid-row",
+        "curvilinear-section-grid-col"])
 def test_curvilinear_render_and_script_produce_identical_png(
         config_builder, curvilinear_sample_path, tmp_path):
     _assert_app_and_script_match(config_builder(), curvilinear_sample_path, tmp_path)
+
+
+# --- 地形マスク (panel["terrain"]): 全レイヤーの上に地面より下を塗った多角形 ---
+# 地表の変数は別ファイル (ds1 = terrain サンプル)。docs/section_extension_guide.md 5 節
+
+def _terrain_section_cfg(path, x_dim, y_dim, terrain, layer_sel=None, ranges=None,
+                         log_y=False, labels=False):
+    panel = mc_config.default_section_panel()
+    panel["x_dim"], panel["y_dim"] = x_dim, y_dim
+    panel["section_path"] = path
+    panel["selection"] = {"time": "2024-01-01T06:00:00"}
+    panel["ranges"] = ranges or {}
+    panel["axis"].update({"invert_y": True, "log_y": log_y})
+    panel["terrain"] = {**mc_config.default_section_panel()["terrain"], "show": True, **terrain}
+    fill = mc_config.default_fill_layer("ds0", "t")
+    cont = mc_config.default_contour_layer("ds0", "z")
+    cont["style"]["labels"] = {"show": labels, "fontsize": 7, "fmt": "%g"}
+    vec = mc_config.default_vector_layer("ds0", "u", "v")
+    vec["style"]["stride_x"] = 3
+    for layer in (fill, cont, vec):
+        if layer_sel:
+            layer["selection"] = dict(layer_sel)
+    panel["layers"] = [fill, cont, vec]
+    cfg = mc_config.default_figure_config()
+    cfg["panels"] = [panel]
+    return cfg
+
+
+_PS = {"method": "surface_pressure", "dataset_id": "ds1", "variable": "ps"}
+_HF = {"method": "height_field", "dataset_id": "ds1", "variable": "zs",
+       "height_dataset_id": "ds0", "height_variable": "z"}
+
+
+@pytest.mark.parametrize("builder", [
+    lambda: _terrain_section_cfg({"kind": "great_circle", "start": [122.0, 30.0],
+                                  "end": [150.0, 42.0], "npoints": 80}, "path", "lev", _PS),
+    lambda: _terrain_section_cfg({"kind": "parallel", "lat": 36.0, "lon_range": [120.0, 160.0],
+                                  "npoints": None}, "path", "lev", _HF, log_y=True, labels=True),
+    lambda: _terrain_section_cfg(None, "x", "lev", {**_PS, "color": "#8c564b"},
+                                 layer_sel={"y": 28.0}, ranges={"lev": [1000.0, 300.0]}),
+], ids=["terrain-curvilinear-great-circle-ps", "terrain-curvilinear-parallel-height-field-log",
+        "terrain-curvilinear-grid-row-ps-range"])
+def test_terrain_curvilinear_render_matches_script(builder, curvilinear_sample_path,
+                                                   curvilinear_terrain_path, tmp_path):
+    """2 次元座標格子の地形マスク (地上気圧 [Pa → hPa] / 高度の変数と地形高度 / 格子の行 +
+    レベル範囲) で、アプリの図と生成スクリプトの図が画素一致する。"""
+    _assert_multi_dataset_match(builder(), {"ds0": curvilinear_sample_path,
+                                            "ds1": curvilinear_terrain_path}, {}, tmp_path)
+
+
+@pytest.mark.parametrize("builder", [
+    lambda: _terrain_section_cfg(None, "lon", "level", _PS, layer_sel={"lat": 32.5}),
+    lambda: _terrain_section_cfg({"kind": "great_circle", "start": [60.0, 20.0],
+                                  "end": [130.0, 45.0], "npoints": None}, "path", "level", _HF,
+                                 labels=True),
+], ids=["terrain-regular-lon-height-ps", "terrain-regular-great-circle-height-field-labels"])
+def test_terrain_regular_grid_render_matches_script(builder, sample_path, terrain_sample_path,
+                                                    tmp_path):
+    """1 次元格子の従来の断面 (固定緯度) と大円断面に地形マスク。等値線ラベルは地面の下。"""
+    _assert_multi_dataset_match(builder(), {"ds0": sample_path, "ds1": terrain_sample_path},
+                                {}, tmp_path)
+
+
+def test_terrain_height_coordinate_render_matches_script(sample_path, terrain_sample_path,
+                                                         tmp_path):
+    """鉛直座標が高度 (m) のデータで地形高度による地形マスク (surface_height、km の地形高度を
+    m に換算)。サンプルの気圧面を高度 7000 ln(1000 / p) m に置き換えた一時ファイルで検証。"""
+    ds = mc_dataset.open_dataset(sample_path)
+    z = 7000.0 * np.log(1000.0 / ds["level"].values)
+    ds_h = ds.assign_coords(level=("level", z, {"units": "m", "long_name": "height"}))
+    p_h = str(tmp_path / "atmos_height.nc")
+    ds_h.to_netcdf(p_h)
+    ds.close()
+    ter = mc_dataset.open_dataset(terrain_sample_path)
+    ter_km = ter.assign(zs_km=(ter["zs"] / 1000.0).assign_attrs(units="km"))
+    p_t = str(tmp_path / "terrain_km.nc")
+    ter_km.to_netcdf(p_t)
+    ter.close()
+    cfg = _terrain_section_cfg(None, "lon", "level",
+                               {"method": "surface_height", "dataset_id": "ds1",
+                                "variable": "zs_km"}, layer_sel={"lat": 32.5})
+    cfg["panels"][0]["axis"]["invert_y"] = False
+    _assert_multi_dataset_match(cfg, {"ds0": p_h, "ds1": p_t}, {}, tmp_path)
+
+
+# --- 地図への経路表示 (map.section_paths): 地図 + 鉛直断面の 2 パネル ---
+# docs/section_extension_guide.md 6 節。地図は断面パネルを panel_id で参照する
+
+def _map_with_section_overlay(section_panel, *, curvi, end_labels=True, **style):
+    """(a) 地図 (断面の経路を重ねる) + (b) 鉛直断面 の 2 パネル config。"""
+    section_panel["panel_id"] = "sec"
+    m = mc_config.default_panel()
+    m["panel_id"] = "map"
+    m["selection"] = {"time": "2024-01-01T06:00:00"}
+    if curvi:
+        m["projection"] = {"name": "LambertConformal", "central_longitude": 140.0,
+                           "central_latitude": 30.0, "standard_parallels": [30.0, 60.0]}
+        m["region"] = None
+        lev = ("lev", 500.0)
+    else:
+        m["projection"] = {"name": "PlateCarree", "central_longitude": 150.0}
+        m["region"] = {"lon_min": 60.0, "lon_max": 240.0, "lat_min": 0.0, "lat_max": 70.0}
+        lev = ("level", 500.0)
+    m["map"]["land"] = {"show": True, "color": "#d9d2c2", "above_data": True}
+    fill = mc_config.default_fill_layer("ds0", "t")
+    fill["selection"] = {lev[0]: lev[1]}
+    m["layers"] = [fill]
+    m["map"]["section_paths"] = [{"panel_id": "sec", "color": "#d62728", "width": 2.0,
+                                  "linestyle": "-", "end_labels": end_labels,
+                                  "labels": ["A", "B"], "label_fontsize": 10.0, **style}]
+    cfg = mc_config.default_figure_config()
+    cfg["figure"]["figsize"] = [10.0, 4.0]
+    cfg["figure"]["layout"] = {**cfg["figure"]["layout"], "nrows": 1, "ncols": 2}
+    cfg["panels"] = [m, section_panel]
+    return cfg
+
+
+@pytest.mark.parametrize("builder", [
+    lambda: _map_with_section_overlay(_curvilinear_section_great_circle_config()["panels"][0],
+                                      curvi=True),
+    lambda: _map_with_section_overlay(_curvilinear_section_grid_row_config()["panels"][0],
+                                      curvi=True, end_labels=False, linestyle="--"),
+    lambda: _map_with_section_overlay(_curvilinear_section_meridian_config()["panels"][0],
+                                      curvi=True, color="black", width=1.0,
+                                      labels=["", "North"]),
+], ids=["overlay-curvilinear-great-circle-labels", "overlay-curvilinear-grid-row-dashed",
+        "overlay-curvilinear-meridian-end-label-only"])
+def test_section_overlay_curvilinear_render_matches_script(builder, curvilinear_sample_path,
+                                                           tmp_path):
+    """2 次元座標格子: 大円 (端点の文字) / 格子の行 (破線、文字なし) / 等経度線 の経路を
+    ランベルト図法の地図 (陸を前景) に重ねた 2 パネルで、render と生成スクリプトが画素一致。"""
+    _assert_app_and_script_match(builder(), curvilinear_sample_path, tmp_path)
+
+
+@pytest.mark.parametrize("builder", [
+    lambda: _map_with_section_overlay(_vsection_stream_config()["panels"][0], curvi=False),
+    lambda: _map_with_section_overlay(_vsection_great_circle_dateline_config()["panels"][0],
+                                      curvi=False),
+], ids=["overlay-regular-lon-height", "overlay-regular-great-circle-dateline"])
+def test_section_overlay_regular_render_matches_script(builder, sample_path, tmp_path):
+    """1 次元格子: 従来の経度–高度 (固定緯度、経度範囲) の線と、日付変更線をまたぐ大円。"""
+    _assert_app_and_script_match(builder(), sample_path, tmp_path)
+
+
+def test_curvilinear_section_grid_row_on_bare_dims(curvilinear_sample_path, tmp_path):
+    """x / y が座標変数を持たない (bare dim、WRF の west_east 等) 2 次元座標格子でも、
+    格子線断面 (行を index で固定、横軸 = 0 始まりの格子番号、経緯度の併記) が
+    render と生成スクリプトで一致する。"""
+    ds = mc_dataset.open_dataset(curvilinear_sample_path).drop_vars(["x", "y"])
+    path = str(tmp_path / "curvi_bare_dims.nc")
+    ds.to_netcdf(path)
+    ds.close()
+    cfg = _curvilinear_section_grid_row_config()
+    cfg["panels"][0]["selection"]["y"] = 25          # index で固定
+    _assert_app_and_script_match(cfg, path, tmp_path)
 
 
 def test_curvilinear_no_region_extent_is_projected_bbox(curvilinear_sample_path):

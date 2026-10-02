@@ -4,4 +4,4 @@
 # License, version 3 only; see LICENSE and LICENSE.exception.
 """ClimCanvas — netCDF 大気・海洋データ可視化アプリ。"""
 
-__version__ = "1.01"
+__version__ = "1.02"

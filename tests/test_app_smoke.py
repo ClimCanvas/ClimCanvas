@@ -826,7 +826,8 @@ def test_role_time_override_ui(tmp_path):
 
 
 def test_curvilinear_map_mode(curvilinear_sample_path):
-    """2 次元座標 (lon(y,x) / lat(y,x)) のデータ: 地図モードが開き、断面モードは出ない。
+    """2 次元座標 (lon(y,x) / lat(y,x)) のデータ: 地図モードが開き、時間断面は出ない
+    (鉛直断面は 2026-09-30 から出る: test_curvilinear_vsection_orientations)。
 
     レイヤーの「固定する次元」には鉛直 (lev) だけが出て、水平面の dim (y / x) は
     固定対象にならないこと。ランベルト図法 + 領域指定 (2 次元座標の min/max が
@@ -835,8 +836,9 @@ def test_curvilinear_map_mode(curvilinear_sample_path):
     at = _load_app(curvilinear_sample_path)
     assert not at.exception
     assert not at.error
-    # 使えるモード = 水平断面図 / 1次元プロット / 2次元プロット (vsec / tsec / 集計系は出ない)
-    assert len(at.selectbox(key="plot_mode_0").options) == 3
+    # 使えるモード = 水平断面図 / 鉛直断面図 / 1次元プロット / 2次元プロット (tsec / 集計系は出ない)
+    assert at.selectbox(key="plot_mode_0").options == ["水平断面図", "鉛直断面図",
+                                                        "1次元プロット", "2次元プロット"]
     assert at.session_state["plot_mode_0"] == "map"
     keys = {w.key for w in at.selectbox}
     assert "fill_map0_0_sel_lev" in keys
@@ -911,7 +913,8 @@ def test_coord_files_ui(curvilinear_bare_paths):
     assert not at.error, [e.value for e in at.error]
     assert at.session_state["datasets"][0]["coord_paths"] == [lonlat_path]
     # 経緯度が付いたので地図モードが開き、断面・集計系は消える
-    assert at.selectbox(key="plot_mode_0").options == ["水平断面図", "1次元プロット", "2次元プロット"]
+    assert at.selectbox(key="plot_mode_0").options == ["水平断面図", "鉛直断面図",
+                                                        "1次元プロット", "2次元プロット"]
     at.selectbox(key="plot_mode_0").set_value("map")
     at.run()
     assert not at.exception and not at.error, [e.value for e in at.error]
@@ -1097,3 +1100,255 @@ def test_coord_files_survive_session_roundtrip(curvilinear_bare_paths):
     cfg = at2.session_state["panel_cfg_0"]
     assert cfg["projection"]["name"] == "LambertConformal"
     assert cfg["layers"][0]["selection"] == {"lev": 1000.0}
+
+
+def test_curvilinear_vsection_orientations(curvilinear_sample_path):
+    """2 次元座標格子の鉛直断面 (docs/section_extension_guide.md 4 節): 向きは 格子の行 /
+    列 (内挿なし) と 等緯度線 / 等経度線 / 大円 (双一次内挿) の 5 つ。
+
+    - 格子の行 (既定): x_dim = x、固定する行 y はレイヤーの selection、目盛の経緯度併記が
+      既定 ON、固定した行の緯度・経度の範囲が caption に出る
+    - 等緯度線: x_dim = "path"、section_path が入り、レイヤーに水平の固定は無い、
+      x 軸ラベルの既定値は経度、経路長の caption
+    - 大円: 併記 ON、x 軸ラベルの既定値は distance、点の数を手動にできる
+    - 図が描けて (エラーなし)、図の下の枠に内挿の注記が出る
+    """
+    at = _load_app(curvilinear_sample_path)
+    at.selectbox(key="plot_mode_0").set_value("vsec")
+    at.run()
+    assert not at.exception and not at.error
+    radio = at.radio(key="vsec_orient_vsec0")
+    assert radio.value == "grid_row"
+    assert len(radio.options) == 5
+    cfg = at.session_state["panel_cfg_0"]
+    assert cfg["x_dim"] == "x" and cfg["y_dim"] == "lev" and cfg["section_path"] is None
+    assert "y" in cfg["layers"][0]["selection"]
+    assert cfg["axis"]["x_lonlat_ticks"] is True
+    assert any("に沿う断面" in c.value and "緯度" in c.value for c in at.caption)
+    assert any("内挿なし" in m.value for m in at.markdown)
+
+    at.radio(key="vsec_orient_vsec0").set_value("parallel")
+    at.run()
+    assert not at.exception and not at.error
+    cfg = at.session_state["panel_cfg_0"]
+    assert cfg["x_dim"] == "path"
+    assert cfg["section_path"]["kind"] == "parallel"
+    assert cfg["section_path"]["npoints"] is None
+    assert cfg["layers"][0]["selection"] == {}
+    assert cfg["axis"]["x_label"].startswith("lon")
+    assert cfg["axis"]["x_lonlat_ticks"] is False
+    assert any("経路長" in c.value for c in at.caption)
+    assert any("双一次内挿" in m.value for m in at.markdown)
+
+    at.radio(key="vsec_orient_vsec0").set_value("great_circle")
+    at.run()
+    assert not at.exception and not at.error
+    at.checkbox(key="vsec_np_auto_vsec0").set_value(False)
+    at.run()
+    at.number_input(key="vsec_np_vsec0").set_value(150)
+    at.run()
+    assert not at.exception and not at.error
+    cfg = at.session_state["panel_cfg_0"]
+    assert cfg["section_path"]["kind"] == "great_circle"
+    assert cfg["section_path"]["npoints"] == 150
+    assert len(cfg["section_path"]["start"]) == 2
+    assert cfg["axis"]["x_label"] == "distance [km]"
+    assert cfg["axis"]["x_lonlat_ticks"] is True
+    assert any("大円に沿う断面" in m.value for m in at.markdown)
+
+
+def test_regular_grid_vsection_offers_great_circle(sample_path):
+    """1 次元格子では従来の 経度–高度 / 緯度–高度 に「2 点間の大円」が加わる。
+    従来の向きの設定 (固定緯度はレイヤー、x 範囲のスライダー) は変わらない。"""
+    at = _load_app(sample_path)
+    at.selectbox(key="plot_mode_0").set_value("vsec")
+    at.run()
+    assert not at.exception and not at.error
+    radio = at.radio(key="vsec_orient_vsec0")
+    assert radio.options == ["経度–高度 (緯度を固定)", "緯度–高度 (経度を固定)",
+                             "2 点間の大円に沿う (距離–高度、内挿)"]
+    cfg = at.session_state["panel_cfg_0"]
+    assert cfg["x_dim"] == "lon" and cfg["section_path"] is None
+    assert "lat" in cfg["layers"][0]["selection"]
+    assert cfg["axis"]["x_lonlat_ticks"] is False
+    assert any(w.key == "vsec_xrange_vsec0" for w in at.select_slider)
+
+    at.radio(key="vsec_orient_vsec0").set_value("great_circle")
+    at.run()
+    assert not at.exception and not at.error
+    cfg = at.session_state["panel_cfg_0"]
+    assert cfg["x_dim"] == "path" and cfg["section_path"]["kind"] == "great_circle"
+    assert cfg["layers"][0]["selection"] == {}
+    assert not any(w.key == "vsec_xrange_vsec0" for w in at.select_slider)
+
+
+def test_curvilinear_section_path_session_roundtrip(curvilinear_sample_path, tmp_path,
+                                                    monkeypatch):
+    """大円断面の設定 (向き・端点・点の数・併記) がセッションの保存 → 復元で戻る。"""
+    monkeypatch.setenv("CC_SESSION_DIRS", str(tmp_path))
+    at = _load_app(curvilinear_sample_path)
+    at.selectbox(key="plot_mode_0").set_value("vsec")
+    at.run()
+    at.radio(key="vsec_orient_vsec0").set_value("great_circle")
+    at.run()
+    at.number_input(key="vsec_gc_lon0_vsec0").set_value(120.5)
+    at.number_input(key="vsec_gc_lat1_vsec0").set_value(41.0)
+    at.checkbox(key="vsec_np_auto_vsec0").set_value(False)
+    at.run()
+    at.number_input(key="vsec_np_vsec0").set_value(90)
+    at.checkbox(key="vsec_llticks_vsec0").set_value(False)
+    at.run()
+    assert not at.exception and not at.error
+    at.text_input(key="_session_save_name").set_value("gc")
+    at.run()
+    _button(at, "_session_save_btn").set_value(True)
+    at.run()
+    assert not at.exception
+    cfg_before = at.session_state["panel_cfg_0"]
+    assert cfg_before["section_path"] == {"kind": "great_circle",
+                                          "start": [120.5, cfg_before["section_path"]["start"][1]],
+                                          "end": [cfg_before["section_path"]["end"][0], 41.0],
+                                          "npoints": 90}
+    assert cfg_before["axis"]["x_lonlat_ticks"] is False
+
+    at2 = _load_app(curvilinear_sample_path)
+    at2.selectbox(key="_session_restore_slot").set_value("gc")
+    at2.run()
+    _button(at2, "_session_restore_btn").set_value(True)
+    at2.run()
+    assert not at2.exception
+    at2.run()
+    assert not at2.exception and not at2.error
+    cfg_after = at2.session_state["panel_cfg_0"]
+    assert cfg_after == cfg_before
+
+
+def test_terrain_mask_ui(curvilinear_sample_path, curvilinear_terrain_path):
+    """地形マスクの UI (docs/section_extension_guide.md 5 節): 気圧座標では方法が 地上気圧 /
+    高度の変数と地形高度 の 2 つ、変数の候補は単位が換算できるもの (ps [Pa]) が先頭、
+    方法を切り替えると変数の選択は方法ごとに別 (zs)。図が描けて注記が出る。"""
+    at = _load_app(curvilinear_sample_path)
+    at.text_input(key="_new_file_path").set_value(curvilinear_terrain_path)
+    at.run()
+    _button(at, "add_file").set_value(True)
+    at.run()
+    at.selectbox(key="plot_mode_0").set_value("vsec")
+    at.run()
+    at.radio(key="vsec_orient_vsec0").set_value("great_circle")
+    at.run()
+    assert not at.exception and not at.error
+    assert at.session_state["panel_cfg_0"]["terrain"]["show"] is False
+
+    at.checkbox(key="vsec_ter_show_vsec0").set_value(True)
+    at.run()
+    assert not at.exception and not at.error
+    assert at.selectbox(key="vsec_ter_method_vsec0").options == [
+        "地上気圧の変数 (鉛直座標が気圧)", "高度の変数と地形高度の変数 (鉛直座標が気圧)"]
+    var_sb = at.selectbox(key="vsec_ter_var_surface_pressure_vsec0")
+    assert var_sb.options[0] == "ds1: ps [Pa]" and var_sb.value == "ds1: ps"
+    cfg = at.session_state["panel_cfg_0"]
+    assert cfg["terrain"] == {"show": True, "method": "surface_pressure", "dataset_id": "ds1",
+                              "variable": "ps", "height_dataset_id": None,
+                              "height_variable": None, "color": "#7f7f7f"}
+    assert any("地形マスク" in m.value and "地上気圧" in m.value for m in at.markdown)
+
+    at.selectbox(key="vsec_ter_method_vsec0").set_value("height_field")
+    at.run()
+    assert not at.exception and not at.error
+    cfg = at.session_state["panel_cfg_0"]
+    assert cfg["terrain"]["method"] == "height_field"
+    assert (cfg["terrain"]["dataset_id"], cfg["terrain"]["variable"]) == ("ds1", "zs")
+    assert (cfg["terrain"]["height_dataset_id"], cfg["terrain"]["height_variable"]) == ("ds0", "z")
+    assert any("高度の変数と地形高度" in m.value for m in at.markdown)
+
+
+def test_section_overlay_ui(curvilinear_sample_path):
+    """地図の「断面の経路」(docs/section_extension_guide.md 6 節): 鉛直断面のパネルが無ければ
+    caption だけ、あれば multiselect に出て、選ぶと map.section_paths に panel_id
+    (= セッションのパネル ID) 付きで入り、2 パネルの図が描ける。断面パネルを地図に変えると
+    参照は外れる。"""
+    at = _load_app(curvilinear_sample_path)
+    assert any("鉛直断面のパネルを追加" in c.value for c in at.caption)
+    at.number_input(key="grid_ncols").set_value(2)
+    at.run()
+    _button(at, "add_panel").set_value(True)
+    at.run()
+    at.selectbox(key="plot_mode_1").set_value("vsec")
+    at.run()
+    at.radio(key="vsec_orient_vsec1").set_value("great_circle")
+    at.run()
+    assert not at.exception and not at.error
+    _button(at, "_panel_sel_0").set_value(True)
+    at.run()
+    assert at.multiselect(key="secov_sel_map0").options == ["パネル 2"]
+    at.multiselect(key="secov_sel_map0").set_value(["1"])
+    at.run()
+    assert not at.exception and not at.error
+    cfg = at.session_state["panel_cfg_0"]
+    assert cfg["map"]["section_paths"] == [
+        {"panel_id": "1", "color": "#d62728", "width": 1.5, "linestyle": "-",
+         "end_labels": True, "labels": ["A", "B"], "label_fontsize": 10.0}]
+    # 端点の文字は自由に変えられる (空欄はその端に文字を出さない)
+    at.text_input(key="secov_lab0_map0_1").set_value("西")
+    at.text_input(key="secov_lab1_map0_1").set_value("")
+    at.run()
+    assert not at.exception and not at.error
+    assert at.session_state["panel_cfg_0"]["map"]["section_paths"][0]["labels"] == ["西", ""]
+
+    # 断面パネルを地図モードに変えると候補が消え、参照も外れる
+    _button(at, "_panel_sel_1").set_value(True)
+    at.run()
+    at.selectbox(key="plot_mode_1").set_value("map")
+    at.run()
+    _button(at, "_panel_sel_0").set_value(True)
+    at.run()
+    assert not at.exception and not at.error
+    assert at.session_state["panel_cfg_0"]["map"]["section_paths"] == []
+
+
+def test_coord_files_same_as_first_file_checkbox(curvilinear_bare_paths, curvilinear_terrain_path,
+                                                 tmp_path):
+    """2 つ目のファイル (経緯度の無い地表ファイル) の座標ファイル欄に「ds0 と同じ座標
+    ファイルを使う」チェックが出て、入れると ds0 の FLON/FLAT が付き、経路断面の地形マスクに
+    使える (ユーザー要望 2026-09-30)。1 つ目のファイルにはチェックは出ない。"""
+    import xarray as xr
+
+    bare_path, lonlat_path = curvilinear_bare_paths
+    with xr.open_dataset(curvilinear_terrain_path) as ter:
+        ter.drop_vars(["lon", "lat"]).to_netcdf(str(tmp_path / "terrain_bare.nc"))
+    ter_bare = str(tmp_path / "terrain_bare.nc")
+    at = _load_app(bare_path)
+    assert not any(cb.key == "_coord_same_0" for cb in at.checkbox)
+    at.text_input(key="_coord_lon_0").set_value(lonlat_path)
+    at.run()
+    _button(at, "_coord_apply_0").set_value(True)
+    at.run()
+    at.run()
+    assert at.session_state["datasets"][0]["coord_paths"] == [lonlat_path]
+
+    at.text_input(key="_new_file_path").set_value(ter_bare)
+    at.run()
+    _button(at, "add_file").set_value(True)
+    at.run()
+    assert not at.exception
+    same = at.checkbox(key="_coord_same_1")
+    assert same.value is False
+    same.set_value(True)
+    at.run()
+    at.run()
+    assert not at.exception and not at.error
+    assert at.session_state["datasets"][1]["coord_paths"] == [lonlat_path]
+    assert at.text_input(key="_coord_lon_1").value == lonlat_path
+    assert at.checkbox(key="_coord_same_1").value is True
+
+    # 経路断面 + 地上気圧の地形マスク (2 つ目のファイルの経緯度が要る)
+    at.selectbox(key="plot_mode_0").set_value("vsec")
+    at.run()
+    at.radio(key="vsec_orient_vsec0").set_value("great_circle")
+    at.run()
+    at.checkbox(key="vsec_ter_show_vsec0").set_value(True)
+    at.run()
+    assert not at.exception and not at.error
+    cfg = at.session_state["panel_cfg_0"]
+    assert cfg["terrain"]["show"] and cfg["terrain"]["variable"] == "ps"
+    assert any("地形マスク" in m.value for m in at.markdown)
