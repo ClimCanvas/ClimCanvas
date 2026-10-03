@@ -1,13 +1,14 @@
 # ClimCanvas
 
-ClimCanvas is a browser-based GUI for plotting atmospheric and ocean data
+ClimCanvas is a browser-based GUI for plotting atmospheric and oceanic data
 stored in netCDF files. Build horizontal maps, vertical and time sections, 1-D
 plots, scatter plots and more from a sidebar, then export the result as an image
 or animation, or as a **standalone Python script** (xarray / matplotlib /
 cartopy) that reproduces the figure exactly and can be edited by hand.
 
-Website (in Japanese): <https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/> — with the
-[user manual](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/manual/index.html) and the [FAQ](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/faq.html).
+Website: <https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/> — with the
+[user manual](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/manual/index.html) and the [FAQ](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/faq.html)
+(also available [in Japanese](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/)).
 
 ## Features
 
@@ -40,7 +41,7 @@ commit per release, so the tip of `main` is always the newest version (the
 necessarily the newest). To use a specific version, clone its tag:
 
 ```bash
-git clone --branch v1.02 https://github.com/ClimCanvas/ClimCanvas.git
+git clone --branch v1.02.1 https://github.com/ClimCanvas/ClimCanvas.git
 ```
 
 To update an existing clone, run `git pull` in it; your settings and sessions
@@ -79,9 +80,9 @@ python -m streamlit run app.py
 
 Open the URL that Streamlit prints, choose a netCDF file, build the figure in
 the sidebar, and use the download buttons for PNG / SVG / PDF / EPS, GIF / MP4,
-or the reproduction script. The [user manual](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/manual/index.html)
-(Japanese) covers the sidebar, every layer type and the numerical conventions;
-the [FAQ](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/faq.html) collects common questions and error messages.
+or the reproduction script. The [user manual](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/manual/index.html)
+covers the sidebar, every layer type and the numerical conventions;
+the [FAQ](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/faq.html) collects common questions and error messages.
 
 ClimCanvas needs no configuration file. An optional `~/.climcanvas/config.toml`
 on the machine that runs the app can restrict which directories netCDF files

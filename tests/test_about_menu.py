@@ -47,6 +47,16 @@ def test_new_issue_url_prefills_version():
         "https://github.com/ClimCanvas/ClimCanvas/issues/new?template=feature.yml&version=1.00")
 
 
+@pytest.mark.parametrize("lang", sorted(i18n.LANG_LABELS))
+def test_site_url_follows_ui_language(lang):
+    """サイトは ja → 日本語版 (CITATION.cff と同じトップ)、それ以外 → 英語版 /en/。"""
+    url = about.site_url(lang)
+    assert url == (about.SITE_URL if lang == "ja" else about.SITE_URL_EN)
+    assert about.SITE_URL_EN.startswith(about.SITE_URL)
+    # リンク文字列は scheme と末尾の / を除いた URL
+    assert "https://" + about.site_label(lang) + "/" == url
+
+
 def test_issue_templates_exist():
     """About が指すテンプレート名が .github/ISSUE_TEMPLATE/ に実在する。"""
     root = pathlib.Path(__file__).resolve().parent.parent / ".github" / "ISSUE_TEMPLATE"
@@ -65,7 +75,9 @@ def test_about_markdown(lang, monkeypatch):
     assert about.new_issue_url(ver, "bug.yml") in md
     assert about.new_issue_url(ver, "feature.yml") in md
     assert "AGPL-3.0-only" in md and "/blob/main/LICENSE" in md
-    assert about.SITE_URL in md
+    # サイトは UI 言語に応じて日本語版 / 英語版 (リンク文字列も同じ URL を示す)
+    assert f"[{about.site_label(lang)}]({about.site_url(lang)})" in md
+    assert (about.SITE_URL_EN in md) == (lang != "ja")
     # Markdown のリンクが 5 本とも崩れていない
     assert len(re.findall(r"\[[^\]]+\]\(https://[^)\s]+\)", md)) == 5
     if lang != "ja":

@@ -6,11 +6,11 @@ cff-version: 1.2.0
 message: "If you use ClimCanvas, please cite it with the version you used."
 type: software
 title: "ClimCanvas"
-abstract: "A browser-based GUI for plotting atmospheric and ocean data in netCDF, with export of standalone reproduction scripts."
+abstract: "A browser-based GUI for plotting atmospheric and oceanic data in netCDF, with export of standalone reproduction scripts."
 authors:
   - family-names: "Mori"
     given-names: "Masato"
-version: "1.02"
+version: "1.02.1"
 date-released: "2026-10-03"
 doi: "10.5281/zenodo.22997360"
 license: "AGPL-3.0-only"

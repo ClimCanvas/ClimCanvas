@@ -2,12 +2,16 @@
 # リンクを並べる。contact_links の url は https のみ (mailto は GitHub のスキーマで弾かれる)
 # ので、メールは README の Contact 節を指す。フォームの URL はアプリの About と同じ
 # (docs/feedback_channels_plan.md 2 節。tests/test_issue_templates.py が構造を検査)
-# 先頭はサイトのマニュアル・FAQ (Issue を書く前に自分で解決できるように。2026-09-29 追加)
+# 先頭はサイトのマニュアル・FAQ (Issue を書く前に自分で解決できるように。2026-09-29 追加、
+# 2026-10-03 に英語版を先頭にして日本語版を 2 番目に)
 blank_issues_enabled: false
 contact_links:
-  - name: Manual and FAQ (Japanese)
+  - name: Manual and FAQ
+    url: https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/manual/index.html
+    about: How to use ClimCanvas, common questions and error messages. Please check here before opening an issue.
+  - name: マニュアル・FAQ (日本語)
     url: https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/manual/index.html
-    about: How to use ClimCanvas, common questions and error messages (in Japanese). Please check here before opening an issue.
+    about: ClimCanvas の使い方、よくある質問とエラーメッセージ。Issue を書く前にご確認ください。
   - name: Feedback form (no GitHub account needed)
     url: https://docs.google.com/forms/d/e/1FAIpQLSc-tnfYzsqcctESephPCJqbht_TQRl6TPw8NE7sgkmlcAZ68w/viewform
     about: Comments, impressions, requests and difficulties in using ClimCanvas. Responses are not public.

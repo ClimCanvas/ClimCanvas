@@ -1245,6 +1245,6 @@
  "エラー量 {err} の単位が本体の [{units}] と違う可能性がある": "오차 {err}의 단위가 본체 변수 [{units}]와 다를 수 있음",
  "ご意見・ご要望 (GitHub アカウント不要): [Google フォーム]({url})": "의견·요청 (GitHub 계정 불필요): [Google 설문지]({url})",
  "バグ報告・機能の要望 (GitHub Issues): [バグ報告]({bug_url}) / [機能の要望]({feature_url})": "버그 신고·기능 요청 (GitHub Issues): [버그 신고]({bug_url}) / [기능 요청]({feature_url})",
- "Web サイト (マニュアル・FAQ、日本語): [atmos.rcast.u-tokyo.ac.jp/climcanvas]({url})": "웹사이트 (매뉴얼·FAQ, 일본어): [atmos.rcast.u-tokyo.ac.jp/climcanvas]({url})",
+ "Web サイト (マニュアル・FAQ): [{label}]({url})": "웹사이트 (매뉴얼·FAQ, 영어): [{label}]({url})",
  "ライセンス: [{license}]({url})": "라이선스: [{license}]({url})"
 }

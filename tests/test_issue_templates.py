@@ -60,6 +60,11 @@ def test_issue_form_schema(name):
     assert len(set(ids)) == len(ids), ids
     # アプリの About は選択画面に `?version=...` を渡し、選んだフォームの版の欄に入る
     assert about.ISSUE_VERSION_FIELD in ids
+    # 前書きは英語版サイトのマニュアルと FAQ を指す (日本語版の案内も残す)
+    intro = "\n".join(e["attributes"]["value"] for e in body if e["type"] == "markdown")
+    assert about.SITE_URL_EN + "manual/index.html" in intro
+    assert about.SITE_URL_EN + "faq.html" in intro
+    assert about.SITE_URL + "manual/index.html" in intro
 
 
 def test_issue_template_chooser():
@@ -73,5 +78,6 @@ def test_issue_template_chooser():
     # 選択画面のフォームはアプリの About と同じ (版の事前入力は About 側だけ)
     urls = {link["url"] for link in links}
     assert set(about.FEEDBACK_FORMS.values()) <= urls
-    # 先頭はサイトのマニュアル (About と同じサイト)
-    assert links[0]["url"].startswith(about.SITE_URL), links[0]
+    # 先頭は英語版サイトのマニュアル (About の英語 UI と同じ)、日本語版のマニュアルもある
+    assert links[0]["url"].startswith(about.SITE_URL_EN), links[0]
+    assert about.SITE_URL + "manual/" in {link["url"].rsplit("/", 1)[0] + "/" for link in links}

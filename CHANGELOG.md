@@ -8,6 +8,17 @@ versions and are not listed.
 
 ## Unreleased
 
+## 1.02.1 — 2026-10-03
+
+### Added
+
+- Website: an English version of the whole site (home, features, usage, install, gallery, the manual and the FAQ) under `/en/`, with the language switch in the header leading to the same page in the other language. The manual screenshots were taken with the English UI, and the search works per language.
+
+### Changed
+
+- The README, the new-issue page on GitHub and "About" in the app menu now link to the English site; the Japanese site is still linked from each of them, and "About" links to the Japanese site when the UI language is Japanese.
+- The English one-line description now reads "atmospheric and oceanic data" instead of "atmospheric and ocean data" (English app subtitle, README, website). The manual screenshots and the home-page video still show the previous subtitle.
+
 ## 1.02 — 2026-10-03
 
 ### Added

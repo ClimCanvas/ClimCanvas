@@ -28,7 +28,8 @@ FEEDBACK_FORMS = {
 # 版の質問を作り直すと番号が変わり、版が事前入力されなくなる
 FEEDBACK_VERSION_ENTRY = "entry.2010447076"
 REPO_URL = "https://github.com/ClimCanvas/ClimCanvas"
-SITE_URL = "https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/"   # 公式サイト (日本語。マニュアル・FAQ)
+SITE_URL = "https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/"   # 公式サイト (日本語。マニュアル・FAQ。CITATION.cff の url と同じ)
+SITE_URL_EN = SITE_URL + "en/"                                   # 英語版 (ja 以外の UI 言語はこちらへ。2026-10-03)
 # Issue フォーム (bug.yml / feature.yml) の版の欄の id。選択画面 (issues/new/choose) は
 # クエリを選んだフォームに引き継がない (2026-09-27 に公開側で確認) ので、テンプレートを
 # 直接指定した URL を種別ごとに出す
@@ -51,6 +52,16 @@ def new_issue_url(version: str, template: str = "bug.yml") -> str:
     return f"{REPO_URL}/issues/new?template={template}&{ISSUE_VERSION_FIELD}={quote(version)}"
 
 
+def site_url(lang: str) -> str:
+    """UI 言語に応じた公式サイトの URL (ja → 日本語版、それ以外 → 英語版)。"""
+    return SITE_URL if lang == "ja" else SITE_URL_EN
+
+
+def site_label(lang: str) -> str:
+    """About に表示するサイトのリンク文字列 (scheme と末尾の / を除いた URL)。"""
+    return site_url(lang).removeprefix("https://").rstrip("/")
+
+
 def about_markdown() -> str:
     ver = display_version()
     return "\n".join([
@@ -61,8 +72,8 @@ def about_markdown() -> str:
         "- " + t("バグ報告・機能の要望 (GitHub Issues): [バグ報告]({bug_url}) / [機能の要望]({feature_url})",
                  bug_url=new_issue_url(ver, ISSUE_TEMPLATES["bug"]),
                  feature_url=new_issue_url(ver, ISSUE_TEMPLATES["feature"])),
-        "- " + t("Web サイト (マニュアル・FAQ、日本語): [atmos.rcast.u-tokyo.ac.jp/climcanvas]({url})",
-                 url=SITE_URL),
+        "- " + t("Web サイト (マニュアル・FAQ): [{label}]({url})",
+                 label=site_label(current_lang()), url=site_url(current_lang())),
         "- " + t("ライセンス: [{license}]({url})", license="AGPL-3.0-only",
                  url=f"{REPO_URL}/blob/main/LICENSE"),
     ])

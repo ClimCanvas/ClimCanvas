@@ -14,7 +14,8 @@ body:
         No GitHub account, or just a comment? Use the
         [feedback form](https://docs.google.com/forms/d/e/1FAIpQLSc-tnfYzsqcctESephPCJqbht_TQRl6TPw8NE7sgkmlcAZ68w/viewform)
         ([Japanese](https://docs.google.com/forms/d/e/1FAIpQLSe-zXza-DXr8eGdOIgLKBH98luuLQdCooD6fcjCO3fA3gvuKw/viewform)) instead.
-        The [user manual](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/manual/index.html) and [FAQ](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/faq.html) are in Japanese.
+        The [user manual](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/manual/index.html) and [FAQ](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/faq.html)
+        (also [in Japanese](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/manual/index.html)) may already answer your question.
   - type: textarea
     id: goal
     attributes:
