@@ -1,17 +1,22 @@
 # ClimCanvas dependencies (pip). With conda, prefer the bundled environment.yml:
 #   conda env create -f environment.yml
-# Note: cartopy combined with PROJ 9.8 has a known bug that shifts coastlines
-# by about 0.19 degrees in latitude (cartopy issue #2708, fixed by PR #2653).
-# With conda, pin "proj<9.8" (environment.yml already does). With pip, PROJ is
-# bundled in the pyproj wheel; if the coastlines look offset, check that PROJ
-# is not 9.8 or newer:
-#   python -c "import pyproj; print(pyproj.proj_version_str)"
+# Note on cartopy / PROJ versions:
+#   - cartopy 0.26.0 has a regression that makes polar and azimuthal maps with
+#     a full-longitude extent collapse for some central longitudes (cartopy
+#     issue #2745, fix not released yet), hence "cartopy<0.26" below. Lift the
+#     pin once a release that includes the fix is available.
+#   - cartopy combined with PROJ 9.8 has a known bug that shifts coastlines by
+#     about 0.19 degrees in latitude (cartopy issue #2708, fixed by PR #2653,
+#     which is only in cartopy 0.26). With conda, pin "proj<9.8"
+#     (environment.yml already does). With pip, PROJ is bundled in the pyproj
+#     wheel; if the coastlines look offset, check that PROJ is not 9.8 or newer:
+#       python -c "import pyproj; print(pyproj.proj_version_str)"
 xarray
 netCDF4
 numpy
 pandas
 matplotlib
-cartopy
+cartopy<0.26
 scipy
 cftime
 nc-time-axis

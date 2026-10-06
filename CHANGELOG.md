@@ -8,6 +8,12 @@ versions and are not listed.
 
 ## Unreleased
 
+## 1.02.2 — 2026-10-06
+
+### Changed
+
+- The pip requirements, the README and the install page of the website now keep cartopy below 0.26 (cartopy 0.26.0 can make polar maps covering all longitudes disappear for some central longitudes; the conda environment file was already pinned to 0.25.0). The pin will be lifted once a cartopy release with the fix is available.
+
 ## 1.02.1 — 2026-10-03
 
 ### Added

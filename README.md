@@ -41,7 +41,7 @@ commit per release, so the tip of `main` is always the newest version (the
 necessarily the newest). To use a specific version, clone its tag:
 
 ```bash
-git clone --branch v1.02.1 https://github.com/ClimCanvas/ClimCanvas.git
+git clone --branch v1.02.2 https://github.com/ClimCanvas/ClimCanvas.git
 ```
 
 To update an existing clone, run `git pull` in it; your settings and sessions
@@ -62,8 +62,11 @@ or, with pip:
 pip install -r requirements.txt
 ```
 
-`environment.yml` pins PROJ to versions older than 9.8 on purpose: PROJ 9.8
-has a known bug that shifts PlateCarree coastlines (cartopy issue 2708).
+Both files keep cartopy below 0.26 on purpose, because cartopy 0.26.0 has a
+regression that makes polar maps covering all longitudes disappear for some
+central longitudes (cartopy issue 2745). `environment.yml` also pins PROJ to
+versions older than 9.8: PROJ 9.8 has a known bug that shifts PlateCarree
+coastlines (cartopy issue 2708).
 
 Optional colormap packages are detected at start-up if installed:
 
