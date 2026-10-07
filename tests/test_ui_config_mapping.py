@@ -1259,6 +1259,33 @@ def test_line_bundle_widgets_map_to_config(sample_path):
     assert len([c for c in fig.axes[0].collections if isinstance(c, PolyCollection)]) == 1
 
 
+def test_line_marker_size_widget_maps_to_config(sample_path):
+    """1次元プロットのライン: マーカーを選ぶと「マーカーサイズ (pt)」のスライダーが
+    出て style.marker_size に入る。「なし」ならスライダーは出ず None。"""
+    at = _load_app(sample_path)
+    at.selectbox(key="plot_mode_0").set_value("line")
+    at.run()
+    assert not at.exception
+    lid = "line0_0"
+    assert not [w for w in at.slider if w.key == f"line_msize_{lid}"]
+    assert at.session_state["panel_cfg_0"]["layers"][0]["style"]["marker_size"] is None
+    at.selectbox(key=f"line_marker_{lid}").set_value("o")
+    at.run()
+    assert not at.exception
+    assert at.slider(key=f"line_msize_{lid}").value == 6.0
+    at.slider(key=f"line_msize_{lid}").set_value(9.5)
+    at.run()
+    assert not at.exception
+    style = at.session_state["panel_cfg_0"]["layers"][0]["style"]
+    assert (style["marker"], style["marker_size"]) == ("o", 9.5)
+    at.selectbox(key=f"line_marker_{lid}").set_value("none")
+    at.run()
+    assert not at.exception
+    style = at.session_state["panel_cfg_0"]["layers"][0]["style"]
+    assert (style["marker"], style["marker_size"]) == (None, None)
+    assert not [w for w in at.slider if w.key == f"line_msize_{lid}"]
+
+
 def test_line_xrange_spans_all_loaded_files(tmp_path):
     """1次元プロット「プロット軸」の範囲: 候補値は読み込んだ全ファイルの x 座標の
     和集合。歴史実験 (1850–2014) の後に将来シナリオ (2015–2100) を読み込んでも

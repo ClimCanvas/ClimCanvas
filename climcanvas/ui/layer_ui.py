@@ -1047,6 +1047,10 @@ def line_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
                            format_func=tr_labels(_LINE_MARKER_LABELS).get,
                            key=f"line_marker_{lid}")
     s["marker"] = None if _marker == "none" else _marker
+    # マーカーを選んだときだけ大きさ (pt) を出す。なしなら None (既定のまま)
+    s["marker_size"] = (float(st.slider(
+        t("マーカーサイズ (pt)"), 1.0, 15.0, 6.0, 0.5, key=f"line_msize_{lid}"))
+        if s["marker"] else None)
     if is_dist:
         s["secondary_y"] = st.checkbox(
             t("第2軸 (右の縦軸) に描く"), value=False, key=f"line_y2_{lid}",
@@ -1117,6 +1121,9 @@ def line_bundle_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
                            format_func=tr_labels(_LINE_MARKER_LABELS).get,
                            key=f"bundle_marker_{lid}")
     s["marker"] = None if _marker == "none" else _marker
+    s["marker_size"] = (float(st.slider(
+        t("マーカーサイズ (pt)"), 1.0, 15.0, 6.0, 0.5, key=f"bundle_msize_{lid}"))
+        if s["marker"] else None)
     s["secondary_y"] = st.checkbox(
         t("第2軸 (右の縦軸) に描く"), value=False, key=f"bundle_y2_{lid}",
         help=t("単位の違う物理量を重ねるとき用。第2軸のラベル・範囲・目盛などは「第2軸 (右)」で指定する"))

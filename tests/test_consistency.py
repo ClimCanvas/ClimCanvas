@@ -627,7 +627,8 @@ def _line_1d_bundle_config():
     panel["axis"]["y_label"] = "T [K]"
     layer = mc_config.default_line_bundle_layer("ds0", "t", "level")
     layer["style"].update({"color": "#4c72b0", "linewidth": 1.0, "alpha": 0.4,
-                           "marker": "o", "label": "T (levels)"})
+                           "marker": "o", "marker_size": 4.0,
+                           "label": "T (levels)"})
     panel["layers"] = [layer]
     cfg = mc_config.default_figure_config()
     cfg["panels"] = [panel]

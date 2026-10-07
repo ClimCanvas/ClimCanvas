@@ -247,6 +247,8 @@ def _random_line_panel(rng: random.Random) -> dict:
         "color": rng.choice(["tab:blue", "#cc3300"]),
         "linewidth": rng.choice([1.0, 2.5]),
         "linestyle": rng.choice(["-", "--", ":"]),
+        "marker": rng.choice([None, "o", "^"]),
+        "marker_size": rng.choice([None, 3.0, 9.0]),
         "label": var,
     })
     panel["layers"] = [layer]

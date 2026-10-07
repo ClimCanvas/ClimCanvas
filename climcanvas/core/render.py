@@ -4390,6 +4390,8 @@ def dist_line_kwargs(style: dict) -> dict:
         kw["color"] = style["color"]
     if style.get("marker"):
         kw["marker"] = style["marker"]
+        if style.get("marker_size") is not None:
+            kw["markersize"] = float(style["marker_size"])
     if style.get("label"):
         kw["label"] = style["label"]
     return kw
@@ -5465,7 +5467,9 @@ def _line_layer_data(panel: dict, layer: dict, variable: str,
 
 def line_plot_kwargs(style: dict) -> dict:
     """1次元プロットのライン (kind="line") の ax.plot kwargs (render/scriptgen 共用)。
-    色・マーカー・ラベルは明示指定があるときだけ渡す (空欄→凡例に出さない)。"""
+    色・マーカー・ラベルは明示指定があるときだけ渡す (空欄→凡例に出さない)。
+    マーカーの大きさ (marker_size、pt) はマーカーがあり None でないときだけ
+    markersize に渡す (None = matplotlib 既定。旧設定はキー自体が無い)。"""
     kwargs = {
         "linewidth": style.get("linewidth", 1.5),
         "linestyle": style.get("linestyle", "solid"),
@@ -5474,6 +5478,8 @@ def line_plot_kwargs(style: dict) -> dict:
         kwargs["color"] = style["color"]
     if style.get("marker"):
         kwargs["marker"] = style["marker"]
+        if style.get("marker_size") is not None:
+            kwargs["markersize"] = float(style["marker_size"])
     if style.get("label"):
         kwargs["label"] = style["label"]
     return kwargs

@@ -2580,6 +2580,47 @@ def test_line_bundle_zero_linewidth_hides_lines():
     assert labels == ["min-max", "p5-p95"]
 
 
+def test_line_marker_size_sets_markersize():
+    """line / line_bundle の style.marker_size はマーカーの大きさ (pt、Line2D の
+    markersize) になる。None (既定・キーの無い旧設定) なら matplotlib 既定
+    (rcParams lines.markersize = 6) のままで図は変わらない。"""
+    ds = _line_ds()
+    _use(ds)
+    panel = mc_config.default_line_panel()
+    panel["x_dim"] = "level"
+    panel["selection"] = {}
+    big = mc_config.default_line_layer("ds0", "g")
+    big["style"].update({"marker": "o", "marker_size": 9.5})
+    dflt = mc_config.default_line_layer("ds0", "g")
+    dflt["style"].update({"marker": "s"})
+    legacy = mc_config.default_line_layer("ds0", "g")
+    legacy["style"].update({"marker": "^"})
+    del legacy["style"]["marker_size"]
+    panel["layers"] = [big, dflt, legacy]
+    fig = _render(panel)
+    ax = fig.axes[0]
+    assert [ln.get_marker() for ln in ax.lines] == ["o", "s", "^"]
+    assert ax.lines[0].get_markersize() == 9.5
+    assert ax.lines[1].get_markersize() == matplotlib.rcParams["lines.markersize"]
+    assert ax.lines[2].get_markersize() == matplotlib.rcParams["lines.markersize"]
+
+    # 束: 全線に同じ大きさ
+    vals = np.arange(12.0).reshape(3, 4)
+    ds = xr.Dataset({"g": (("member", "x"), vals)},
+                    coords={"member": np.arange(3), "x": np.arange(4.0)})
+    _use(ds)
+    panel = mc_config.default_line_panel()
+    panel["x_dim"] = "x"
+    panel["selection"] = {}
+    layer = mc_config.default_line_bundle_layer("ds0", "g", "member")
+    layer["style"].update({"marker": "^", "marker_size": 3.0})
+    panel["layers"] = [layer]
+    fig = _render(panel)
+    assert len(fig.axes[0].lines) == 3
+    assert all(ln.get_marker() == "^" and ln.get_markersize() == 3.0
+               for ln in fig.axes[0].lines)
+
+
 # --- 地図: Natural Earth の解像度 (map.resolution、2026-09-23) ---
 
 def _ne_features(ax) -> dict:

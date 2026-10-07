@@ -1051,6 +1051,7 @@ def default_line_layer(dataset_id: str, variable: str) -> dict:
             "linewidth": 1.5,
             "linestyle": "solid",
             "marker": None,           # None / "o" / "x" / "s" / "."
+            "marker_size": None,      # マーカーの大きさ (pt)。None = matplotlib 既定 (6)
             "label": None,            # None = 変数名を流用
             "value_scale": 1.0,
             "value_offset": 0.0,
@@ -1118,6 +1119,7 @@ def default_line_bundle_layer(dataset_id: str, variable: str,
             "linewidth": 0.8,         # 0 なら束の線を描かない (統計線の帯だけを見せる用途)
             "linestyle": "solid",
             "marker": None,           # None / "o" / "x" / "s" / "."
+            "marker_size": None,      # マーカーの大きさ (pt)。None = matplotlib 既定 (6)
             "alpha": 0.5,             # 束の透明度 (本数が多いときに重なりを見せる)
             "label": None,            # None = 凡例に出さない (1 本目にだけ付く)
             "value_scale": 1.0,
