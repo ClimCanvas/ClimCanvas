@@ -4333,7 +4333,9 @@ def hist_kwargs(style: dict) -> dict:
     """ax.hist の kwargs を解決する (render/scriptgen 共用)。
 
     bins が list のときは昇順・重複なしを検証し、range は使わない
-    (matplotlib も境界指定時は range を無視する)。
+    (matplotlib も境界指定時は range を無視する)。orientation は横向き
+    ("horizontal") のときだけ、rwidth (ビン幅に対する棒の幅の比) は値があり
+    histtype が bar のときだけ渡す (既定・旧設定の生成スクリプトを変えない)。
     """
     bins = style.get("bins", 20)
     if isinstance(bins, (list, tuple)):
@@ -4352,6 +4354,10 @@ def hist_kwargs(style: dict) -> dict:
         "histtype": style.get("histtype", "bar"),
         "alpha": float(style.get("alpha", 0.7)),
     }
+    if style.get("orientation") == "horizontal":
+        kw["orientation"] = "horizontal"
+    if style.get("rwidth") is not None and kw["histtype"] == "bar":
+        kw["rwidth"] = float(style["rwidth"])
     if style.get("range") is not None and not isinstance(bins, list):
         kw["range"] = (float(style["range"][0]), float(style["range"][1]))
     if style.get("color"):
@@ -4583,7 +4589,8 @@ def dist_axis_labels(panel: dict, datasets: dict):
     axis.x_label / y_label の明示指定が優先。None のときは自動ラベル:
     x = 最初の hist/ecdf レイヤーの変数名 [units] (long_name は使わない)、
     y = 第1軸の内容から count / probability density / cumulative probability 等
-    (hist があれば hist を優先。第2軸行きのレイヤーは対象外)。
+    (hist があれば hist を優先。第2軸行きのレイヤーは対象外)。hist が横向き
+    (style.orientation == "horizontal") なら値のラベルが y、度数のラベルが x。
     自動ラベルを英語にするのは、matplotlib 既定フォント (DejaVu Sans) が日本語を
     描けず豆腐 (□) になるため (図全体フォントで日本語を選べば手動で日本語にできる)。
     """
@@ -4599,21 +4606,31 @@ def dist_axis_labels(panel: dict, datasets: dict):
     if ysrc is None:
         ysrc = next((ly for ly in layers if ly.get("kind") == "ecdf"
                      and not ly.get("style", {}).get("secondary_y")), None)
-    if not xlab and xsrc is not None:
+    # 値のラベルと度数のラベルを求めてから軸に割り当てる
+    val_lab = None
+    if xsrc is not None:
         attrs = datasets[xsrc["dataset_id"]][xsrc["variable"]].attrs
         units = str(attrs.get("units", ""))
-        xlab = (f"{xsrc['variable']} [{units}]" if units
-                else str(xsrc["variable"]))
-    if not ylab and ysrc is not None:
+        val_lab = (f"{xsrc['variable']} [{units}]" if units
+                   else str(xsrc["variable"]))
+    cnt_lab = None
+    if ysrc is not None:
         s = ysrc.get("style", {})
         if ysrc["kind"] == "ecdf":
-            ylab = ("exceedance probability" if s.get("complementary")
-                    else "cumulative probability")
+            cnt_lab = ("exceedance probability" if s.get("complementary")
+                       else "cumulative probability")
         elif s.get("cumulative"):
-            ylab = ("cumulative probability" if s.get("density")
-                    else "cumulative count")
+            cnt_lab = ("cumulative probability" if s.get("density")
+                       else "cumulative count")
         else:
-            ylab = "probability density" if s.get("density") else "count"
+            cnt_lab = "probability density" if s.get("density") else "count"
+    hist_horizontal = (ysrc is not None and ysrc["kind"] == "hist"
+                       and ysrc.get("style", {}).get("orientation") == "horizontal")
+    x_auto, y_auto = (cnt_lab, val_lab) if hist_horizontal else (val_lab, cnt_lab)
+    if not xlab and x_auto is not None:
+        xlab = x_auto
+    if not ylab and y_auto is not None:
+        ylab = y_auto
     # box/violin パネル: 値の軸に変数ラベル (縦 = y、横向き = x)。
     # 系列軸は系列名の目盛なのでラベルなし
     bsrc = next((ly for ly in layers

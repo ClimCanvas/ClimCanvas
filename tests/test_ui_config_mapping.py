@@ -1286,6 +1286,114 @@ def test_line_marker_size_widget_maps_to_config(sample_path):
     assert not [w for w in at.slider if w.key == f"line_msize_{lid}"]
 
 
+def test_hist_bin_width_caption_follows_bins_and_range(tmp_path):
+    """1次元プロット(集計) のヒストグラム: 「ビン数」の横に出るビンの幅が、ビン数と
+    「値の範囲を指定」の最小値・最大値 (無指定ならデータの min/max) に連動する。
+    ビン境界の直接指定では出ない。"""
+    import numpy as np
+    import xarray as xr
+    dist_path = str(tmp_path / "dist.nc")
+    vals = np.linspace(-2.0, 8.0, 41)          # min -2 / max 8 → 範囲 10
+    xr.Dataset({"ts": ("time", vals)}, coords={"time": np.arange(41)}).to_netcdf(dist_path)
+    at = _load_app(dist_path)
+    at.selectbox(key="plot_mode_0").set_value("dist")
+    at.run()
+    assert not at.exception
+
+    def caption():
+        caps = [c.value for c in at.caption if c.value.startswith("ビンの幅")]
+        assert len(caps) == 1, caps
+        return caps[0]
+
+    assert caption() == "ビンの幅: 0.5 (データ範囲 -2 〜 8)"      # 10 / 20
+    at.number_input(key="hist_nbin_dist0_0").set_value(10)
+    at.run()
+    assert not at.exception
+    assert caption() == "ビンの幅: 1 (データ範囲 -2 〜 8)"
+    at.checkbox(key="hist_rangeon_dist0_0").set_value(True)
+    at.run()
+    assert not at.exception
+    assert caption() == "ビンの幅: 0.1"                             # 既定 0〜1 を 10 分割
+    at.number_input(key="hist_rmax_dist0_0").set_value(5.0)
+    at.run()
+    assert not at.exception
+    assert caption() == "ビンの幅: 0.5"
+    at.number_input(key="hist_rmin_dist0_0").set_value(5.0)        # 最大 ≤ 最小
+    at.run()
+    assert not at.exception
+    assert caption().startswith("ビンの幅: —")
+    at.checkbox(key="hist_bineq_dist0_0").set_value(False)         # ビン境界の直接指定
+    at.run()
+    assert not at.exception
+    assert not [c for c in at.caption if c.value.startswith("ビンの幅")]
+
+
+def test_hist_orientation_and_width_widgets_map_to_config(tmp_path):
+    """ヒストグラム: 「向き」と「棒の幅を手動指定」が style.orientation / rwidth に
+    入る。幅の指定は描き方が塗り (bar) のときだけ出て、step に変えると None に戻る。"""
+    import numpy as np
+    import xarray as xr
+    dist_path = str(tmp_path / "dist.nc")
+    xr.Dataset({"ts": ("time", np.linspace(-2.0, 8.0, 41))},
+               coords={"time": np.arange(41)}).to_netcdf(dist_path)
+    at = _load_app(dist_path)
+    at.selectbox(key="plot_mode_0").set_value("dist")
+    at.run()
+    assert not at.exception
+    lid = "dist0_0"
+    style = at.session_state["panel_cfg_0"]["layers"][0]["style"]
+    assert (style["orientation"], style["rwidth"]) == ("vertical", None)
+    at.radio(key=f"hist_orient_{lid}").set_value("horizontal")
+    at.checkbox(key=f"hist_rw_manual_{lid}").set_value(True)
+    at.run()
+    assert not at.exception
+    at.slider(key=f"hist_rw_{lid}").set_value(0.5)
+    at.run()
+    assert not at.exception
+    style = at.session_state["panel_cfg_0"]["layers"][0]["style"]
+    assert (style["orientation"], style["rwidth"]) == ("horizontal", 0.5)
+    at.selectbox(key=f"hist_httype_{lid}").set_value("step")
+    at.run()
+    assert not at.exception
+    assert not [w for w in at.checkbox if w.key == f"hist_rw_manual_{lid}"]
+    style = at.session_state["panel_cfg_0"]["layers"][0]["style"]
+    assert (style["orientation"], style["rwidth"]) == ("horizontal", None)
+
+
+def test_plot_size_none_leaves_box_aspect_unfixed(sample_path):
+    """「プロットサイズ」→「axes 枠の縦横比」の「固定しない (Figure サイズに従う)」で
+    panel.box_aspect が None になり、render は set_box_aspect を呼ばない。既定は
+    6.4:4.8 (0.75)、2次元プロット系の既定は 1:1 のまま。地図では常に None。"""
+    at = _load_app(sample_path)
+    assert at.session_state["panel_cfg_0"]["box_aspect"] is None      # 地図
+    at.selectbox(key="plot_mode_0").set_value("line")
+    at.run()
+    assert not at.exception
+    assert abs(at.session_state["panel_cfg_0"]["box_aspect"] - 0.75) < 1e-9   # 4.8 / 6.4
+    ds = mc_dataset.open_dataset(sample_path)
+
+    def rendered_box_aspect():
+        cfg = mc_config.default_figure_config()
+        cfg["panels"] = [at.session_state["panel_cfg_0"]]
+        dsid = cfg["panels"][0]["layers"][0]["dataset_id"]
+        return mc_render.render_figure(cfg, {dsid: ds}).axes[0].get_box_aspect()
+
+    assert abs(rendered_box_aspect() - 0.75) < 1e-9
+    at.radio(key="boxaspect_preset_line0").set_value("none")
+    at.run()
+    assert not at.exception
+    assert at.session_state["panel_cfg_0"]["box_aspect"] is None
+    assert rendered_box_aspect() is None
+    at.selectbox(key="plot_mode_0").set_value("scatter")
+    at.run()
+    assert not at.exception
+    assert at.session_state["panel_cfg_0"]["box_aspect"] == 1.0
+    at.radio(key="boxaspect_preset_scatter0").set_value("none")
+    at.run()
+    assert not at.exception
+    assert at.session_state["panel_cfg_0"]["box_aspect"] is None
+
+
 def test_line_xrange_spans_all_loaded_files(tmp_path):
     """1次元プロット「プロット軸」の範囲: 候補値は読み込んだ全ファイルの x 座標の
     和集合。歴史実験 (1850–2014) の後に将来シナリオ (2015–2100) を読み込んでも

@@ -2020,6 +2020,9 @@ def bubble_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
 
 _HISTTYPE_LABELS = {"bar": "塗り (bar)", "step": "階段 (step, 線のみ)",
                     "stepfilled": "階段塗り (stepfilled)"}
+# ヒストグラムの向き (style.orientation)。bar レイヤーの _BAR_ORIENT_LABELS とは別
+# (ax.hist の orientation。横では値が y 軸・度数が x 軸)
+_HIST_ORIENT_LABELS = {"vertical": "縦 (値が x 軸)", "horizontal": "横 (値が y 軸)"}
 
 
 def _fix_dims_ui(ds, dims, skip, p):
@@ -2102,9 +2105,15 @@ def hist_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
                                        key=f"hist_rmin_{lid}")),
                 float(cc2.number_input(t("最大値"), value=1.0, format="%g",
                                        key=f"hist_rmax_{lid}"))]
-        s["bins"] = int(st.number_input(t("ビン数"), 2, 200, 20,
-                                        key=f"hist_nbin_{lid}"))
+        c_nb, c_bw = st.columns(2)
+        s["bins"] = int(c_nb.number_input(t("ビン数"), 2, 200, 20,
+                                          key=f"hist_nbin_{lid}"))
+        # ビンの幅の参考表示 (number_input の入力欄の高さに合わせて 1 行下げる)。
+        # 値はレイヤー完成後に _write_hist_bin_width() が埋める
+        c_bw.markdown("&nbsp;")
+        bw_slot = c_bw.empty()
     else:
+        bw_slot = None
         _bl = parse_float_list(st.text_input(
             t("ビン境界 (カンマ区切り)"), value="0, 1, 2, 5, 10",
             key=f"hist_binedges_{lid}",
@@ -2128,6 +2137,19 @@ def hist_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
              "なぞった一筆書きの多角形。**枠線なしでは見た目はほぼ同一**で、"
              "枠線を付けると bar はビンの間にも縦線が入り、stepfilled は"
              "輪郭だけになる。階段 (step) は塗りなしの輪郭線のみ"))
+    s["orientation"] = st.radio(
+        t("向き"), list(_HIST_ORIENT_LABELS),
+        format_func=tr_labels(_HIST_ORIENT_LABELS).get, horizontal=True,
+        key=f"hist_orient_{lid}",
+        help=t("横にすると値が y 軸・度数が x 軸になる (自動の軸ラベルも入れ替わる)。"
+             "同じパネルの ECDF・ラインは縦向きのまま"))
+    # 棒の幅 (ビン幅に対する比) は塗り (bar) のときだけ (step 系では matplotlib が無視)
+    if s["histtype"] == "bar" and st.checkbox(
+            t("棒の幅を手動指定"), value=False, key=f"hist_rw_manual_{lid}",
+            help=t("off だとビンいっぱいに描く (matplotlib 既定)。"
+                 "描き方が「塗り (bar)」のときだけ有効")):
+        s["rwidth"] = float(st.slider(t("幅 (ビン幅に対する比)"), 0.1, 1.0, 0.8, 0.05,
+                                      key=f"hist_rw_{lid}"))
     if not st.checkbox(t("色を自動 (カラーサイクル)"), value=True,
                        key=f"hist_autocol_{lid}"):
         s["color"] = color_selector(t("色"), "#1f77b4", key=f"hist_col_{lid}",
@@ -2145,7 +2167,43 @@ def hist_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         s["edge_linewidth"] = 0.0
     s["label"] = _legend_label_ui(f"hist_label_{lid}_{var}", var)
     value_transform_ui(s, f"hist_{lid}")
+    _write_hist_bin_width(bw_slot, layer, datasets)
     return layer
+
+
+def _write_hist_bin_width(slot, layer, datasets):
+    """hist_layer_ui の「ビン数」の横の placeholder に等間隔ビンの幅を書く。
+
+    layer が完成した後 (値の変換の widget 描画後) に呼ぶ。範囲は「値の範囲を指定」
+    の最小値・最大値、無指定なら render と同じ値 (dist_values = 固定・範囲制限・
+    値の変換後の有限値) の min/max — matplotlib の ax.hist が range=None で使う
+    もの (min == max なら numpy.histogram と同じく ±0.5 に広げる)。ビン境界の
+    直接指定 (slot が None) では何も出さない。ビン数・範囲・データの選択を変える
+    たびに再計算される (2026-10-07)。
+    """
+    if slot is None:
+        return
+    s = layer["style"]
+    nbins = s.get("bins")
+    if not isinstance(nbins, int) or nbins < 1:
+        return
+    rng = s.get("range")
+    if rng is not None:
+        lo, hi = float(rng[0]), float(rng[1])
+        if not hi > lo:
+            slot.caption(t("ビンの幅: — (最大値は最小値より大きくしてください)"))
+            return
+        slot.caption(t("ビンの幅: {w:g}", w=(hi - lo) / nbins))
+        return
+    vals = mc_render.dist_values(layer, datasets)
+    if vals.size == 0:
+        slot.caption(t("ビンの幅: — (値がありません)"))
+        return
+    lo, hi = float(vals.min()), float(vals.max())
+    if lo == hi:
+        lo, hi = lo - 0.5, hi + 0.5
+    slot.caption(t("ビンの幅: {w:g} (データ範囲 {lo:g} 〜 {hi:g})",
+                   w=(hi - lo) / nbins, lo=lo, hi=hi))
 
 
 def ecdf_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,

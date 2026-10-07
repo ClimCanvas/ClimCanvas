@@ -903,6 +903,9 @@ def _random_dist_panel(rng: random.Random) -> dict:
                                                     "stepfilled"]),
                             "alpha": round(rng.uniform(0.5, 1.0), 2),
                             "edge_linewidth": rng.choice([0.0, 0.8]),
+                            "orientation": rng.choice(["vertical", "vertical",
+                                                       "horizontal"]),
+                            "rwidth": rng.choice([None, 0.6, 0.9]),
                             "label": var})
     elif kind == "ecdf":
         ly = mc_config.default_ecdf_layer("ds0")

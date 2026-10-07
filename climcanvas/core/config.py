@@ -571,6 +571,12 @@ def default_hist_layer(dataset_id: str) -> dict:
             "density": False,       # True = 確率密度 (面積合計 1)
             "cumulative": False,    # True = 累積
             "histtype": "bar",      # bar / step (線のみ) / stepfilled
+            # 向き: "vertical" (値が x 軸) | "horizontal" (値が y 軸、
+            # ax.hist(orientation="horizontal")。自動の軸ラベルも入れ替わる)
+            "orientation": "vertical",
+            # 棒の幅 (ビン幅に対する比 0〜1)。None = ビンいっぱい (matplotlib 既定)。
+            # histtype="bar" のときだけ渡す (step 系では matplotlib が無視する)
+            "rwidth": None,
             "color": None,          # None = matplotlib カラーサイクル
             "alpha": 0.7,           # 重ね描き前提で既定は半透明
             "edge_color": "#000000",

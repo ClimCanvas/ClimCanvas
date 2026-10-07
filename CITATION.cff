@@ -10,7 +10,7 @@ abstract: "A browser-based GUI for plotting atmospheric and oceanic data in netC
 authors:
   - family-names: "Mori"
     given-names: "Masato"
-version: "1.02.3"
+version: "1.02.4"
 date-released: "2026-10-07"
 doi: "10.5281/zenodo.22997360"
 license: "AGPL-3.0-only"

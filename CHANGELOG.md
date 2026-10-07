@@ -9,6 +9,14 @@ manual, FAQ, gallery) are not listed either.
 
 ## Unreleased
 
+## 1.02.4 — 2026-10-07
+
+### Added
+
+- Histogram layers: the bin width is shown next to "Number of bins" and follows the number of bins and the value range (or the data minimum and maximum when no range is set).
+- Histogram layers: "Orientation" (vertical / horizontal; a horizontal histogram puts the values on the y axis and swaps the automatic axis labels) and "Set bar width manually" (the bar width as a fraction of the bin width, for the bar draw style).
+- "Plot size": a "Do not fix (follow the figure size)" choice for the axes box aspect ratio, so the plot area stretches with the figure size and the layout margins instead of keeping the fixed default shape (6.4:4.8, or 1:1 for the 2-D plot modes). The default is unchanged, so existing figures keep their shape.
+
 ## 1.02.3 — 2026-10-07
 
 ### Added

@@ -2273,14 +2273,16 @@ def _make_series_nc(path):
 
 
 def _dist_hist_config():
-    """dist_1d: 度数ヒストグラム1層 (軸ラベル自動フォールバック + 枠線 + 凡例)。"""
+    """dist_1d: 度数ヒストグラム1層 (軸ラベル自動フォールバック + 枠線 + 凡例 +
+    横向き + 棒の幅 (ビン幅の 0.85 倍))。"""
     panel = mc_config.default_dist_panel()
     panel["title"] = "histogram (counts)"
     hist = mc_config.default_hist_layer("ds0")
     hist["variable"] = "ts"
     hist["agg_dim"] = "time"
-    hist["style"].update({"bins": 15, "alpha": 1.0,
-                          "edge_linewidth": 0.8, "label": "ts"})
+    hist["style"].update({"bins": 15, "alpha": 1.0, "edge_linewidth": 0.8,
+                          "orientation": "horizontal", "rwidth": 0.85,
+                          "label": "ts"})
     panel["layers"] = [hist]
     cfg = mc_config.default_figure_config()
     cfg["panels"] = [panel]

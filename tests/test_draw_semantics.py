@@ -510,6 +510,35 @@ def test_hist_bar_heights_match_numpy():
     np.testing.assert_allclose(heights, expected)
 
 
+def test_hist_orientation_and_rwidth():
+    """hist: orientation="horizontal" で棒は横向き (幅 = 度数、高さ = ビン幅 × rwidth)、
+    自動の軸ラベルは値が y・度数が x に入れ替わる。縦向きでは rwidth が棒の幅
+    (ビン幅に対する比) になる。"""
+    ds = _series_ds(300)
+    _use(ds)
+    expected, edges = np.histogram(ds["a"].values, bins=12)
+    units = str(ds["a"].attrs.get("units", ""))
+    val_lab = f"a [{units}]" if units else "a"
+    panel = mc_config.default_dist_panel()
+    hist = mc_config.default_hist_layer("ds0")
+    hist["variable"] = "a"
+    hist["agg_dim"] = "time"
+    hist["style"].update({"bins": 12, "orientation": "horizontal", "rwidth": 0.5})
+    panel["layers"] = [hist]
+    fig = _render(panel)
+    ax = fig.axes[0]
+    np.testing.assert_allclose([p.get_width() for p in ax.patches], expected)
+    np.testing.assert_allclose([p.get_height() for p in ax.patches], 0.5 * np.diff(edges))
+    assert (ax.get_xlabel(), ax.get_ylabel()) == ("count", val_lab)
+    # 縦向き + rwidth: 幅がビン幅の半分、ラベルは従来どおり
+    hist["style"].update({"orientation": "vertical"})
+    fig = _render(panel)
+    ax = fig.axes[0]
+    np.testing.assert_allclose([p.get_height() for p in ax.patches], expected)
+    np.testing.assert_allclose([p.get_width() for p in ax.patches], 0.5 * np.diff(edges))
+    assert (ax.get_xlabel(), ax.get_ylabel()) == (val_lab, "count")
+
+
 # --- 1-10: hist2d — 配列 = np.histogram2d、離散化境界 = 集計結果 ---
 
 def test_hist2d_counts_match_numpy_and_discrete_norm():

@@ -778,6 +778,8 @@ _PRESET_DEFAULT_WIDTH = 6.4
 _FONT_MODE_LABELS = {"common": "よく使うフォント", "all": "全フォントから検索"}
 _BOXASPECT_PRESET_LABELS = {"square": "1:1",
                             "default": "6.4:4.8 (matplotlib default)",
+                            # None = set_box_aspect を呼ばず、Figure サイズと余白に従う (2026-10-07)
+                            "none": "固定しない (Figure サイズに従う)",
                             "custom": "任意"}
 _LAT_LABEL_LABELS = {"inline": "図中 (既定)", "edge": "枠沿い", "none": "非表示"}
 _LAT_EDGE_SIDE_LABELS = {"both": "両方", "left": "左のみ", "right": "右のみ"}
@@ -1698,13 +1700,15 @@ def _plot_size_ui(mode: str, mode_key: str):
                     "マップ自体の形は変わらないため、ここでの操作はできません。"))
                 box_aspect = None
             else:
-                options = (["square", "custom"] if is_scatter_mode
-                            else ["default", "custom"])
+                # 先頭が既定 (2次元プロット系は 1:1、他は 6.4:4.8)。"none" は固定しない
+                options = (["square", "none", "custom"] if is_scatter_mode
+                            else ["default", "none", "custom"])
                 plot_preset = st.radio(
                     t("axes 枠の縦横比"), options,
                     format_func=tr_labels(_BOXASPECT_PRESET_LABELS).get,
                     key=f"boxaspect_preset_{mode_key}",
                     help=t("set_box_aspect() で axes 枠 (プロット領域) の高さ/幅を固定する。"
+                         "「固定しない」にすると Figure サイズとレイアウト調整の余白に従って伸縮する。"
                          "タイトル・カラーバー等は枠の外に追加で乗るので、"
                          "保存 PNG 全体の縦横比とは一致しない"))
                 if plot_preset == "custom":
@@ -1714,6 +1718,8 @@ def _plot_size_ui(mode: str, mode_key: str):
                         help=t("例: 0.5 → 横長 / 2.0 → 縦長")))
                 elif plot_preset == "square":
                     box_aspect = 1.0
+                elif plot_preset == "none":
+                    box_aspect = None
                 else:  # "default" (6.4:4.8)
                     box_aspect = 4.8 / 6.4   # = 0.75
     return box_aspect
