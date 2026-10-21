@@ -9,6 +9,25 @@ manual, FAQ, gallery) are not listed either.
 
 ## Unreleased
 
+## 1.04 — 2026-10-21
+
+### Added
+
+- Per-layer fixed time: "Fix the time for this layer" in a layer's settings draws that layer at a
+  time chosen from its own file's time axis, independent of the panel time. Fixed layers keep their
+  time during time-stepping animations, the reproduction script writes their `.sel(time=...)` with
+  that time, and the "Processing applied to this figure" box lists every fixed layer. Useful for a
+  climatology from another file under anomalies, or seasonal means from different files side by side.
+  A warning is shown when every time-bearing layer of a panel is fixed, since stepping then changes
+  only the time label.
+
+### Changed
+
+- When a layer's file lacks the selected time or level (for example after switching a layer to a
+  second file whose time axis differs), the error now names the panel, layer, variable, file and
+  missing value and shows the file's available range, and points to "Fix the time for this layer",
+  instead of xarray's raw "not all values found in index" message.
+
 ## 1.03 — 2026-10-21
 
 ### Added

@@ -171,6 +171,28 @@ def _maskout_entries(style: dict, base: dict, variables: list[str]) -> list[dict
     return out
 
 
+def _time_fixed_entries(panel: dict, layer: dict, base: dict, datasets: dict) -> list[dict]:
+    """レイヤーごとの時刻固定 (layer.time_fixed) を 1 項目で返す。
+
+    図の時刻ラベルはパネルの時刻 1 つなので、別の時刻で描いた層があることは図からは
+    分からない。読者 (と将来の自分) が気づけるよう、固定した層は**パネルの時刻と同じ値でも**
+    必ず出す (時刻送りで動かないことも伝える)。docs/layer_time_fixed_plan.md 弊害 1・2a。
+    時刻次元名はそのレイヤーの dataset の役割から取る (align_dim_names で ds0 の名前に
+    揃っている)。selection にその次元が無い (UI を経ていない設定) なら出さない。
+    """
+    if not layer.get("time_fixed"):
+        return []
+    ds = datasets.get(layer.get("dataset_id"))
+    time_dim = detect_coord_roles(ds).get("time") if ds is not None else None
+    sel = layer.get("selection") or {}
+    if not time_dim or time_dim not in sel:
+        return []
+    panel_value = (panel.get("selection") or {}).get(time_dim)
+    return [{**base, "type": "layer_time_fixed", "variables": _layer_variables(layer),
+             "dim": time_dim, "value": str(sel[time_dim]),
+             "panel_value": None if panel_value is None else str(panel_value)}]
+
+
 def _track_maskout_entries(layer: dict, base: dict) -> list[dict]:
     """track の maskout {variable, below, above} は別変数の生の値による条件。"""
     m = (layer.get("style") or {}).get("maskout") or {}
@@ -497,7 +519,7 @@ def _np_max(a):
 
 
 def collect_notes(figure_config: dict, datasets: dict) -> list[dict]:
-    """figure_config を走査し、値の変換と範囲平均の項目を図の配置順に返す。
+    """figure_config を走査し、値の変換・範囲平均・レイヤーの時刻固定などの項目を図の配置順に返す。
 
     該当が無ければ空リスト (UI は枠ごと出さない)。datasets は dataset_id →
     xr.Dataset (render_figure に渡すものと同じ)。
@@ -511,6 +533,7 @@ def collect_notes(figure_config: dict, datasets: dict) -> list[dict]:
         for j, layer in enumerate(panel.get("layers") or []):
             lbase = {**base, "layer_index": j, "kind": layer.get("kind"),
                      "dataset_id": layer.get("dataset_id")}
+            notes.extend(_time_fixed_entries(panel, layer, lbase, datasets))
             notes.extend(_transform_entries(panel, layer, lbase))
             if layer.get("kind") == "track":
                 notes.extend(_track_maskout_entries(layer, lbase))

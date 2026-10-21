@@ -43,6 +43,18 @@ def sample_path(tmp_path_factory) -> str:
 
 
 @pytest.fixture(scope="session")
+def shifted_time_sample_path(sample_path, tmp_path_factory) -> str:
+    """sample_atmos.nc の時刻軸を 3 時間ずらした複製 (ds0 と 1 つも一致しない時刻軸。
+    別ファイルのレイヤーの時刻固定 (time_fixed) のテスト用)。"""
+    import numpy as np
+    import xarray as xr
+    out = tmp_path_factory.mktemp("shifted") / "sample_atmos_shifted.nc"
+    with xr.open_dataset(sample_path) as ds:
+        ds.assign_coords(time=ds["time"] + np.timedelta64(3, "h")).to_netcdf(str(out))
+    return str(out)
+
+
+@pytest.fixture(scope="session")
 def multifile_sample_dir(sample_path, tmp_path_factory) -> str:
     """sample_atmos.nc を時刻ごとに 8 ファイルへ分割したディレクトリ
     (sample_atmos_{YYYYMMDDhh}.nc。複数ファイルの時間結合のテスト用)。"""

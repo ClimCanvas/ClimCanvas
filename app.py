@@ -995,6 +995,11 @@ _RENDER_ERROR_LABELS = {
         "ベクトルの x成分 {u_var} (形状 {u_shape}) と y成分 {v_var} (形状 {v_shape}) の"
         "格子が違うため描けません。両成分は同じ次元名・同じ形状の格子にしてください "
         "(別ファイルの成分を組み合わせるときは格子の一致を確認)",
+    "selection_not_in_index":
+        "パネル {panel} のレイヤー {layer} ({variable}, {dataset_id}) に {dim} = {value} が"
+        "ありません (このファイルの {dim} は {first} 〜 {last} の {n} 個)。別ファイルの変数を"
+        "重ねるときは、そのレイヤーの設定で「時刻をこのレイヤーで固定する」を使うか、"
+        "両方のファイルにある値を選ぶか、ファイルの座標軸 (時刻・鉛直レベル) を揃えてください",
     "degenerate_geometry":
         "cartopy の既知の不具合 (退化ポリゴン) により描画に失敗しました。"
         "色レベルの端がデータの最小値・最大値や定数領域の値とちょうど一致すると"
@@ -3282,6 +3287,15 @@ except Exception as exc:
     st.stop()
 
 anim_req = st.session_state.pop("_anim_request", None)
+# 時刻を持つ全レイヤーの時刻を固定したパネルは時刻送りで変わらない (時刻ラベルだけ進む)。
+# 警告だけ出して生成は止めない (docs/layer_time_fixed_plan.md 決定 3 = 案 A)
+if anim_req and anim_req[1] is not None and roles.get("time"):
+    _fixed_panels = mc_render.panels_with_all_layers_time_fixed(
+        figure_config, datasets, roles["time"])
+    if _fixed_panels:
+        st.warning(t("パネル {panels} は時刻を持つ全レイヤーの時刻を固定しているため、"
+                     "時刻送りで図は変わりません (時刻ラベルだけ進みます)",
+                     panels=", ".join(str(n) for n in _fixed_panels)))
 if anim_req and anim_req[0] == "play":
     _, anim_time_values, anim_fps, _, anim_centers, _, anim_hold = anim_req
     _n_frames = mc_render.animation_frame_count(anim_time_values, anim_centers, anim_hold)

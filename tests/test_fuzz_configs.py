@@ -324,6 +324,23 @@ def _random_scatter_panel(rng: random.Random) -> dict:
     return panel
 
 
+# レイヤーの時刻固定 (time_fixed) に使う、パネルの既定 (2024-01-01T06:00:00) と別の時刻
+_FUZZ_FIXED_TIMES = ["2024-01-01T00:00:00", "2024-01-01T12:00:00", "2024-01-02T06:00:00"]
+
+
+def _maybe_fix_layer_time(rng: random.Random, layer: dict, p: float) -> None:
+    """確率 p でレイヤーの時刻を固定する (time_fixed + layer.selection["time"] をパネルと別の時刻に)。
+
+    静的描画は selection の合成 (層側優先) で決まるので、画像一致も不変条件
+    (_expected_fill_array は合成後の selection で切り出す) もそのまま通るはず
+    (docs/layer_time_fixed_plan.md Step 5)。
+    """
+    if rng.random() < p:
+        layer["time_fixed"] = True
+        layer["selection"] = {**(layer.get("selection") or {}),
+                              "time": rng.choice(_FUZZ_FIXED_TIMES)}
+
+
 def _random_section_panel(rng: random.Random) -> dict:
     panel = mc_config.default_section_panel()
     x_dim, (x_lo, x_hi), fix = rng.choice([
@@ -344,10 +361,12 @@ def _random_section_panel(rng: random.Random) -> dict:
     _rand_frame_bg(rng, panel, (x_lo, x_hi), (100.0, 1000.0))
     fill = mc_config.default_fill_layer("ds0", "t")
     _rand_fill_style(rng, fill["style"], 200.0, 300.0)
+    _maybe_fix_layer_time(rng, fill, 0.3)
     panel["layers"] = [fill]
     if rng.random() < 0.5:
         contour = mc_config.default_contour_layer("ds0", "z")
         _rand_contour_style(rng, contour["style"], 0.0, 16000.0)
+        _maybe_fix_layer_time(rng, contour, 0.5)
         panel["layers"].append(contour)
     return panel
 
@@ -399,6 +418,7 @@ def _random_map_layers_panel(rng: random.Random) -> dict:
     panel["title"] = "fuzz map layers"
     fill = mc_config.default_fill_layer("ds0", "t")
     _rand_fill_style(rng, fill["style"], 230.0, 290.0)
+    _maybe_fix_layer_time(rng, fill, 0.3)
     layers = [fill]
     extra = rng.choice(["vector", "stream", "hatch", "map_scatter", "contour"])
     if extra == "vector":
@@ -421,6 +441,7 @@ def _random_map_layers_panel(rng: random.Random) -> dict:
         ha["style"].update({"levels": [lo, lo + 30.0],
                             "pattern": rng.choice(["/", "x", "."]),
                             "density": rng.choice([2, 4])})
+        _maybe_fix_layer_time(rng, ha, 0.5)
         layers.append(ha)
     elif extra == "map_scatter":
         ms = mc_config.default_map_scatter_layer("ds0", "precip")
@@ -435,6 +456,7 @@ def _random_map_layers_panel(rng: random.Random) -> dict:
     else:  # contour (地図でのカラーバー位置合わせも通る)
         contour = mc_config.default_contour_layer("ds0", "z")
         _rand_contour_style(rng, contour["style"], 4900.0, 5900.0)
+        _maybe_fix_layer_time(rng, contour, 0.5)
         layers.append(contour)
     panel["layers"] = layers
     return panel

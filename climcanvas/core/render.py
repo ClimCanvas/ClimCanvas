@@ -112,6 +112,12 @@ class RenderError(ValueError):
             "{v_var!r} (shape {v_shape}) are on different grids after "
             "selection; both components must share the same dimension "
             "names and shape",
+        "selection_not_in_index":
+            "Panel {panel}, layer {layer} ({variable} from {dataset_id}): "
+            "{dim}={value!r} is not in that dataset's '{dim}' coordinate "
+            "({dim} runs from {first} to {last}, {n} in total). Pick a value present in "
+            "every file used by the panel, fix the time on that layer (time_fixed), "
+            "or align the files' coordinate axes",
         "degenerate_geometry":
             "Drawing failed due to a degenerate polygon inside cartopy "
             "(a known upstream issue: GEOS 'empty Point' error). This can "
@@ -2629,6 +2635,142 @@ def apply_font_family(figure_config: dict) -> None:
     plt.rcParams["font.family"] = font if font else _INITIAL_FONT_FAMILY
 
 
+# 描画前の selection 照合 (check_selections_in_index) が見る、レイヤー側の変数名のキー
+# (panel.selection と layer.selection の合成が掛かるもの)。ベクトルの v_variable
+# (v_dataset_id 側)・stackplot の variables・fill_between の variable_upper
+# (selection_upper)・散布系の panel.x/y_variable (layer.x/y_fixed) は別扱い
+_SELECTION_VARIABLE_KEYS = ("variable", "u_variable")
+
+
+def _layer_selection_refs(panel: dict, layer: dict) -> list[tuple[str | None, str, dict]]:
+    """レイヤーが固定値つきで読む (dataset_id, variable, 適用される selection) の一覧。
+
+    描画前の index 照合 (check_selections_in_index) 用に、種別ごとの変数名と
+    selection の在処を 1 箇所にまとめる。描画側の規則と同じにすること:
+    - 2D / 1D / 集計系の各レイヤー: {**panel.selection, **layer.selection} を variable
+      (ベクトルは u_variable と v_dataset_id 側の v_variable、stackplot は variables、
+      fill_between の variable_upper には selection_upper) に適用
+      (_layer_data / _section_data / _line_layer_data / _bundle_layer_data /
+      map_scatter_points / dist_values)
+    - 散布系 (scatter / bubble / hist2d / hexbin): panel.x_variable / y_variable に
+      layer.x_fixed / y_fixed (_scatter_xy_arrays)
+    - track は selection を使わない。未設定 (None) の変数は除く
+    新しい描画種別で変数名のキーや selection の在処を変えたらここも更新する
+    (implementation_checklist A 節)。
+    """
+    kind = layer.get("kind")
+    if kind == "track":
+        return []
+    dsid = layer.get("dataset_id")
+    panel_sel = panel.get("selection") or {}
+    refs: list[tuple[str | None, str, dict]] = []
+    if kind in ("scatter", "bubble", "hist2d", "hexbin"):
+        for axis in ("x", "y"):
+            var = panel.get(f"{axis}_variable")
+            if isinstance(var, str):
+                refs.append((dsid, var, layer.get(f"{axis}_fixed") or {}))
+        return refs
+    merged = {**panel_sel, **(layer.get("selection") or {})}
+    for key in _SELECTION_VARIABLE_KEYS:
+        if isinstance(layer.get(key), str):
+            refs.append((dsid, layer[key], merged))
+    if isinstance(layer.get("v_variable"), str) and dsid is not None:
+        refs.append((vector_v_dataset_id(layer), layer["v_variable"], merged))
+    for var in layer.get("variables") or []:
+        if isinstance(var, str):
+            refs.append((dsid, var, merged))
+    if isinstance(layer.get("variable_upper"), str):
+        refs.append((dsid, layer["variable_upper"],
+                     {**panel_sel, **(layer.get("selection_upper") or {})}))
+    return refs
+
+
+def panels_with_all_layers_time_fixed(figure_config: dict, datasets: dict[str, xr.Dataset],
+                                      time_dim: str) -> list[int]:
+    """時刻送りで図が変わらないパネルの番号 (1 始まり) を返す。
+
+    時刻送りの対象 (panel_animates_time) で、時刻次元を持つ変数を読むレイヤーが 1 つ以上あり、
+    そのすべてが time_fixed のパネル。UI がアニメーション要求時に「時刻ラベルだけ進む」と
+    警告するために使う (docs/layer_time_fixed_plan.md 決定 3 = 案 A。生成は止めない)。
+    レイヤーが読む変数は _layer_selection_refs と同じ列挙。
+    """
+    out: list[int] = []
+    for pi, panel in enumerate(figure_config.get("panels") or []):
+        if not panel_animates_time(panel, time_dim) or panel.get("plot_type") == "heatmap":
+            continue
+        n_time_layers = 0
+        all_fixed = True
+        for layer in panel.get("layers") or []:
+            has_time = False
+            for dsid, var, _sel in _layer_selection_refs(panel, layer):
+                ds = datasets.get(dsid) if dsid is not None else None
+                if ds is not None and var in ds and time_dim in ds[var].dims:
+                    has_time = True
+                    break
+            if has_time:
+                n_time_layers += 1
+                if not layer.get("time_fixed"):
+                    all_fixed = False
+        if n_time_layers and all_fixed:
+            out.append(pi + 1)
+    return out
+
+
+def _index_label(value) -> str:
+    """index の端の値を表示用に整形する (datetime64 / Timestamp / cftime は ISO、float は %g)。"""
+    import pandas as _pd
+    if isinstance(value, np.datetime64):
+        value = _pd.Timestamp(value)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if isinstance(value, (float, np.floating)):
+        return f"{float(value):g}"
+    return str(value)
+
+
+def check_selections_in_index(figure_config: dict, datasets: dict[str, xr.Dataset]) -> None:
+    """各パネル・レイヤーの固定値 (selection) が参照先 dataset の座標にあるか、描画前に照合する。
+
+    無ければ RenderError("selection_not_in_index") (パネル・レイヤー番号、変数、dataset id、
+    次元、値、その dataset の座標の範囲つき)。xarray の `.sel()` が出す
+    "not all values found in index" は、どのレイヤー・どのファイルに何が無いのかを
+    示さない (2026-10-21 の実機報告: 時刻軸の違う別ファイルの変数にレイヤーを切り替えた)。
+    判定は座標だけで行い、`ds[dim].sel({dim: value})` が KeyError になるかで見る
+    (描画と同じ規則: 時刻の ISO 文字列・部分文字列・float の完全一致)。
+    index の無い次元 (bare dim の整数位置指定)、dataset や変数が無いケースは
+    ここでは見ない (別のエラーになる)。heatmap は panel 側の variable / selection
+    (レイヤー番号は "-")。アニメーションでは各コマで呼ばれ、コマの時刻が別ファイルに
+    無いときはその時刻の値で止まる。
+    """
+    for pi, panel in enumerate(figure_config.get("panels") or []):
+        refs: list[tuple[int | str, str | None, str, dict]] = []
+        if panel.get("plot_type") == "heatmap":
+            if isinstance(panel.get("variable"), str):
+                refs.append(("-", panel.get("dataset_id"), panel["variable"],
+                             panel.get("selection") or {}))
+        else:
+            for li, layer in enumerate(panel.get("layers") or []):
+                refs.extend((li + 1, dsid, var, sel)
+                            for dsid, var, sel in _layer_selection_refs(panel, layer))
+        for label, dsid, var, sel in refs:
+            ds = datasets.get(dsid) if dsid is not None else None
+            if ds is None or var not in ds:
+                continue
+            dims = ds[var].dims
+            for dim, value in sel.items():
+                if dim not in dims or dim not in ds.indexes or value is None:
+                    continue
+                try:
+                    ds[dim].sel({dim: value})
+                except KeyError:
+                    index = ds.indexes[dim]
+                    raise RenderError(
+                        "selection_not_in_index", panel=pi + 1, layer=label,
+                        variable=var, dataset_id=dsid, dim=dim, value=value,
+                        n=len(index), first=_index_label(index[0]),
+                        last=_index_label(index[-1])) from None
+
+
 def render_figure(figure_config: dict, datasets: dict[str, xr.Dataset]):
     """figure_config から Figure を作る (アプリ描画の入口)。
 
@@ -2643,6 +2785,9 @@ def render_figure(figure_config: dict, datasets: dict[str, xr.Dataset]):
     # コールド実行やコア層だけの利用 — でも custom cmap 名を解決できるように。
     # 読み込み済みならキャッシュで即返る)
     load_custom_cmaps()
+    # 固定値 (時刻・レベル) が各レイヤーの dataset に無いときは、xarray の KeyError より
+    # 先に、どの層・どのファイルに何が無いかを言うエラーにする
+    check_selections_in_index(figure_config, datasets)
     try:
         return _render_figure(figure_config, datasets)
     except RenderError:
@@ -2784,7 +2929,8 @@ def iter_frames(figure_config: dict, datasets: dict[str, xr.Dataset],
     時刻 (展開後) と中心の両方を渡すときは同じ長さであること (同時に動かす)。
 
     複数パネルでは全パネルの時刻を同期して送る。ただし時刻が描画軸のパネル
-    (panel_animates_time が False) は上書きしない。selection は変数の次元で
+    (panel_animates_time が False) は上書きしない。レイヤー側で時刻を固定した
+    レイヤー (layer.time_fixed) も据え置く (背景の気候値を固定して偏差だけ送る等)。selection は変数の次元で
     フィルタされるため、時刻次元を持たない変数でも無視されるだけで安全。
     呼び出し側は yield された Figure を使い終わったら `plt.close(fig)` すること。
     time_label が ON なら text も時刻に追従させる。
@@ -2814,7 +2960,11 @@ def iter_frames(figure_config: dict, datasets: dict[str, xr.Dataset],
                 # 複製した 2 パネルの片方だけ止まる実機報告)。scriptgen の _sel_arg は
                 # レイヤー側の .sel(time=...) も time_value に置き換えるので、
                 # render もレイヤー側を差し替えて一致させる
+                # time_fixed のレイヤー (レイヤーごとの時刻固定) は据え置く。scriptgen は
+                # そのレイヤーの .sel(time=...) をリテラルのまま出す (_sel_arg に layer を渡す)
                 for layer in panel.get("layers") or []:
+                    if layer.get("time_fixed"):
+                        continue
                     layer_sel = layer.get("selection")
                     if layer_sel and time_dim in layer_sel:
                         layer_sel[time_dim] = time_value

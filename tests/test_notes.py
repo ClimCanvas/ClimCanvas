@@ -585,3 +585,33 @@ def test_terrain_mask_entry(datasets, curvilinear_sample_path, curvilinear_terra
     # 壊れた設定 (単位が合わない) は注記なし
     panel["terrain"].update({"method": "surface_pressure", "variable": "zs"})
     assert [n["type"] for n in mc_notes.collect_notes(_figure(panel), dsets)] == ["section_path"]
+
+
+def test_layer_time_fixed_entry(datasets):
+    """レイヤーごとの時刻固定 (docs/layer_time_fixed_plan.md Step 4): time_fixed の層は、パネルの時刻と
+    同じ値でも 1 項目出る (図の時刻ラベルからは分からないため)。追従層 (time_fixed=False) は出ない。
+    整形はパネルの時刻と違うときだけ「とは別」を添える。"""
+    fill = mc_config.default_fill_layer("ds0", "t")           # 追従 (パネルの時刻)
+    contour = mc_config.default_contour_layer("ds0", "z")      # 固定、パネルと別の時刻
+    contour["time_fixed"] = True
+    contour["selection"] = {"time": "2024-01-02T00:00:00"}
+    hatch = mc_config.default_hatch_layer("ds0", "t")          # 固定、パネルと同じ時刻
+    hatch["time_fixed"] = True
+    hatch["selection"] = {"time": "2024-01-01T06:00:00"}
+    panel = _map_panel(fill, contour, hatch)
+    panel["selection"] = {"time": "2024-01-01T06:00:00", "level": 500.0}
+    notes = mc_notes.collect_notes(_figure(panel), datasets)
+    fixed = _by_type(notes, "layer_time_fixed")
+    assert [(n["layer_index"], n["kind"], n["variables"], n["dim"], n["value"], n["panel_value"])
+            for n in fixed] == [
+        (1, "contour", ["z"], "time", "2024-01-02T00:00:00", "2024-01-01T06:00:00"),
+        (2, "hatch", ["t"], "time", "2024-01-01T06:00:00", "2024-01-01T06:00:00"),
+    ]
+    md = format_notes(notes)
+    assert "2024-01-02T00:00:00" in md and "とは別" in md
+    assert md.count("時刻をこのレイヤーで固定") == 2
+    # フラグだけで selection に時刻が無い設定 (UI を経ていない) は出さない
+    contour["selection"] = {}
+    assert _by_type(mc_notes.collect_notes(_figure(panel), datasets), "layer_time_fixed") == [
+        n for n in _by_type(mc_notes.collect_notes(_figure(panel), datasets), "layer_time_fixed")
+        if n["layer_index"] == 2]

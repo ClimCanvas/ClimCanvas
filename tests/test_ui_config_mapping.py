@@ -1521,3 +1521,63 @@ def test_animation_script_follows_path_style(sample_path):
         assert repr(expected) in script, style
         if unexpected:
             assert repr(unexpected) not in script, style
+
+
+def test_layer_time_fixed_maps_to_config(sample_path, shifted_time_sample_path):
+    """レイヤーごとの時刻固定 (docs/layer_time_fixed_plan.md Step 3)。
+
+    時刻軸の違う別ファイル (ds1、3 時間ずれ) に塗りを切り替えると、パネルの時刻 (ds0 の軸) が
+    ds1 に無いので Step 1 の読みやすいエラー (層・ファイル名入り) が出る。「時刻をこのレイヤーで
+    固定する」(fill_{lid}_tfix_time) を on にすると ds1 の時刻軸から選んだ値が
+    layer.selection["time"] に入り layer.time_fixed = True で描ける。選択 (fill_{lid}_tsel_time) は
+    index で、off に戻すと time は外れ time_fixed = False に戻る。"""
+    import pandas as pd
+    at = _load_app(sample_path)
+    at.text_input(key="_new_file_path").set_value(shifted_time_sample_path)
+    at.run()
+    _button(at, "add_file").set_value(True)
+    at.run()
+    assert not at.exception
+    assert len(at.session_state["datasets"]) == 2
+    layer = at.session_state["panel_cfg_0"]["layers"][0]
+    assert layer["time_fixed"] is False and "time" not in layer["selection"]
+
+    at.selectbox(key="fill_map0_0_ds").set_value("ds1")
+    at.run()
+    assert not at.exception
+    assert at.error, "ds1 にパネルの時刻が無いのでエラーになるはず"
+    msg = at.error[0].value
+    assert "レイヤー 1" in msg and "ds1" in msg and "時刻をこのレイヤーで固定する" in msg
+    layer = at.session_state["panel_cfg_0"]["layers"][0]
+    assert layer["dataset_id"] == "ds1"
+    assert layer["time_fixed"] is False and "time" not in layer["selection"]
+
+    at.checkbox(key="fill_map0_0_tfix_time").check()
+    at.run()
+    assert not at.exception
+    assert not at.error
+    ds1 = mc_dataset.open_dataset(shifted_time_sample_path)
+    labels = [pd.Timestamp(v).isoformat() for v in ds1["time"].values]
+    layer = at.session_state["panel_cfg_0"]["layers"][0]
+    assert layer["time_fixed"] is True
+    assert layer["selection"]["time"] == labels[0]
+
+    at.selectbox(key="fill_map0_0_tsel_time").set_value(2)
+    at.run()
+    assert not at.exception
+    assert not at.error
+    layer = at.session_state["panel_cfg_0"]["layers"][0]
+    assert layer["selection"]["time"] == labels[2]
+    # caption にレイヤーの時刻とパネルの時刻が併記される
+    captions = [c.value for c in at.caption]
+    assert any(labels[2] in c and "パネルの時刻" in c for c in captions)
+    # 図の直下の枠「この図に適用した処理」にも固定した層が出る (Step 4)
+    notes_md = [m.value for m in at.markdown if "この図に適用した処理" in m.value]
+    assert notes_md and "時刻をこのレイヤーで固定" in notes_md[0] and labels[2] in notes_md[0]
+
+    at.checkbox(key="fill_map0_0_tfix_time").uncheck()
+    at.run()
+    assert not at.exception
+    layer = at.session_state["panel_cfg_0"]["layers"][0]
+    assert layer["time_fixed"] is False and "time" not in layer["selection"]
+    assert at.error, "パネルの時刻に戻るので再び ds1 に無い"

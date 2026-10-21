@@ -546,7 +546,11 @@ def generate_animation_script(figure_config: dict, datasets: dict[str, xr.Datase
                 # レイヤー側で時刻を固定している設定も render.iter_frames と同じく
                 # 先頭の時刻に揃える (生成時のデータ評価用。.sel 自体は _sel_arg が
                 # time_value 変数に置き換える)
+                # time_fixed のレイヤーは据え置く (render.iter_frames と同じ。
+                # .sel もリテラルのまま出す = _sel_arg に layer を渡す)
                 for layer in panel.get("layers") or []:
+                    if layer.get("time_fixed"):
+                        continue
                     layer_sel = layer.get("selection")
                     if layer_sel and time_dim in layer_sel:
                         layer_sel[time_dim] = time_values[0]
@@ -1421,7 +1425,7 @@ class _ScriptBuilder:
                if dim in ds[variable].dims}
         expr = f"{dsid}[{variable!r}]"
         if sel:
-            expr += ".sel(" + ", ".join(self._sel_arg(d, v) for d, v in sel.items()) + ")"
+            expr += ".sel(" + ", ".join(self._sel_arg(d, v, layer) for d, v in sel.items()) + ")"
         self.body.append(f"{name} = {expr}")
 
         region = panel.get("region")
@@ -1552,13 +1556,17 @@ class _ScriptBuilder:
         self.needs_mpath = True
         self.body.append(f"drop_inverting_contour_rings({cs_name}, ax, ccrs.PlateCarree())")
 
-    def _sel_arg(self, dim: str, value) -> str:
+    def _sel_arg(self, dim: str, value, layer: dict | None = None) -> str:
         """`.sel()` の1引数 `dim=...` を文字列で返す。
 
         アニメーション生成時、`dim` が `animation_time_dim` と一致する場合は
-        リテラルではなく `animation_time_var` 変数として書く。
+        リテラルではなく `animation_time_var` 変数として書く。ただし layer を渡され、
+        その layer が時刻を固定している (time_fixed) ときはリテラルのまま
+        (render.iter_frames がそのレイヤーの時刻を据え置くのと対)。レイヤーの
+        データを切り出す呼び出しは必ず layer を渡すこと (渡し忘れると固定層でも
+        変数化されて render と食い違う)。
         """
-        if dim == self.animation_time_dim:
+        if dim == self.animation_time_dim and not (layer or {}).get("time_fixed"):
             return f"{dim}={self.animation_time_var}"
         return f"{dim}={value!r}"
 
@@ -2134,7 +2142,7 @@ class _ScriptBuilder:
             expr = f"{dsid}[{var!r}]"
             if sel:
                 expr += ".sel(" + ", ".join(
-                    self._sel_arg(d, v) for d, v in sel.items()) + ")"
+                    self._sel_arg(d, v, layer) for d, v in sel.items()) + ")"
             self.body.append(f"{da} = {expr}")
             vt = _value_transform_line(da, style)
             if vt:
@@ -2668,7 +2676,7 @@ class _ScriptBuilder:
             expr = f"{layer['dataset_id']}[{var!r}]"
             if sel:
                 expr += ".sel(" + ", ".join(
-                    self._sel_arg(d, v) for d, v in sel.items()) + ")"
+                    self._sel_arg(d, v, layer) for d, v in sel.items()) + ")"
             body.append(f"{da} = {expr}")
             dims = tuple(d for d in ds[var].dims if d not in sel)
             return da, dims
@@ -2892,7 +2900,7 @@ class _ScriptBuilder:
         expr = f"{dsid}[{var!r}]"
         if sel:
             expr += ".sel(" + ", ".join(
-                self._sel_arg(d, v) for d, v in sel.items()) + ")"
+                self._sel_arg(d, v, layer) for d, v in sel.items()) + ")"
         body.append(f"{da} = {expr}")
         rng = layer.get("agg_range")
         dim = layer.get("agg_dim")
@@ -3003,7 +3011,7 @@ class _ScriptBuilder:
         expr = f"{dsid}[{var!r}]"
         if sel:
             expr += ".sel(" + ", ".join(
-                self._sel_arg(d, v) for d, v in sel.items()) + ")"
+                self._sel_arg(d, v, layer) for d, v in sel.items()) + ")"
         body.append(f"{da} = {expr}")
         vt = _value_transform_line(da, layer["style"])
         if vt:
@@ -3409,7 +3417,7 @@ class _ScriptBuilder:
                 if dim in ds[variable].dims and dim != x_dim}
         expr = f"{dsid}[{variable!r}]"
         if sel:
-            expr += ".sel(" + ", ".join(self._sel_arg(d, v) for d, v in sel.items()) + ")"
+            expr += ".sel(" + ", ".join(self._sel_arg(d, v, layer) for d, v in sel.items()) + ")"
         self.body.append(f"{name} = {expr}")
 
         # averages を selection の直後・cyclic/ranges より前に適用
@@ -3756,7 +3764,7 @@ class _ScriptBuilder:
                if dim in ds[variable].dims}
         expr = f"{dsid}[{variable!r}]"
         if sel:
-            expr += ".sel(" + ", ".join(self._sel_arg(d, v) for d, v in sel.items()) + ")"
+            expr += ".sel(" + ", ".join(self._sel_arg(d, v, layer) for d, v in sel.items()) + ")"
         self.body.append(f"{name} = {expr}")
 
         # render.apply_averages と1対1対応: selection の後、ranges の前で潰す
@@ -3826,7 +3834,7 @@ class _ScriptBuilder:
         sel = {d: v for d, v in selection.items() if d in ds[var].dims}
         expr = f"{dsid}[{var!r}]"
         if sel:
-            expr += ".sel(" + ", ".join(self._sel_arg(d, v) for d, v in sel.items()) + ")"
+            expr += ".sel(" + ", ".join(self._sel_arg(d, v, layers[0] if layers else None) for d, v in sel.items()) + ")"
         self.body.append(f"{name} = {expr}")
         if panel.get("section_path"):
             pv = self._section_path_vars(panel, ds, dsid)

@@ -3216,3 +3216,112 @@ def test_section_overlay_grid_row_and_reference_errors():
     with pytest.raises(mc_render.RenderError) as ei:
         mc_render.render_figure(cfg, _DATASETS)
     assert ei.value.msg_id == "section_overlay_not_section"
+
+
+# --- 1-18: レイヤーごとの時刻固定 (time_fixed) — docs/layer_time_fixed_plan.md Step 5 ---
+
+_TIME_DS_TIMES = ["2024-01-01T00:00:00", "2024-01-01T06:00:00", "2024-01-01T12:00:00"]
+
+
+def _map_time_ds(shift_hours: int = 0) -> xr.Dataset:
+    """(time, lat, lon) の小格子。値 = 時刻番号×1000 + lat*10 + lon*0.1 で、どの時刻の断面を
+    描いたかが値から分かる。shift_hours で時刻軸をずらした複製 (別ファイルの時刻軸が合わない状況)。"""
+    lon = np.arange(100.0, 190.0, 10.0)
+    lat = np.arange(0.0, 50.0, 10.0)
+    time = (np.array(_TIME_DS_TIMES, dtype="datetime64[ns]")
+            + np.timedelta64(shift_hours, "h"))
+    base = lat[:, None] * 10.0 + lon[None, :] * 0.1
+    val = np.stack([base + 1000.0 * k for k in range(len(time))])
+    return xr.Dataset(
+        {"f": (("time", "lat", "lon"), val)},
+        coords={"time": ("time", time),
+                "lat": ("lat", lat, {"units": "degrees_north"}),
+                "lon": ("lon", lon, {"units": "degrees_east"})})
+
+
+def _fixed_time_panel(ds1_time: str) -> dict:
+    """ds0 の塗り (pcolormesh、パネルの時刻に追従) + ds1 の等値線 (時刻固定)。"""
+    panel = mc_config.default_panel()
+    panel["selection"] = {"time": _TIME_DS_TIMES[0]}
+    fill = mc_config.default_fill_layer("ds0", "f")
+    fill["style"].update({"method": "pcolormesh", "levels": [0.0, 1000.0, 2000.0, 3000.0]})
+    contour = mc_config.default_contour_layer("ds1", "f")
+    contour["style"].update({"levels": [2100.0, 2200.0, 2300.0, 2400.0]})
+    contour["time_fixed"] = True
+    contour["selection"] = {"time": ds1_time}
+    panel["layers"] = [fill, contour]
+    return panel
+
+
+def _contour_vertices(ax) -> np.ndarray:
+    cs = _contour_sets(ax)
+    lines = [c for c in cs if not c.filled]
+    assert len(lines) == 1
+    return np.concatenate([p.vertices.ravel() for p in lines[0].get_paths()])
+
+
+def _qm_array(ax, shape) -> np.ndarray:
+    return np.asarray(np.ma.filled(_quadmesh(ax).get_array(), np.nan),
+                      dtype=float).reshape(shape)
+
+
+def test_layer_time_fixed_independent_of_panel_time():
+    """固定層 (ds1、時刻軸が 3 時間ずれた別ファイル) の等値線はパネルの時刻を変えても同一で、
+    追従層 (ds0 の塗り) の配列はパネルの時刻の断面に変わる。固定を外すとパネルの時刻は ds1 に
+    無いので読みやすい RenderError (Step 1)。"""
+    ds0, ds1 = _map_time_ds(), _map_time_ds(shift_hours=3)
+    _use(ds0)
+    _DATASETS["ds1"] = ds1
+    ds1_time = str(ds1["time"].values[2])[:19]   # 2024-01-01T15:00:00 (ds1 の 3 番目)
+    panel = _fixed_time_panel(ds1_time)
+    fig0 = _render(panel)
+    arr0 = _qm_array(fig0.axes[0], ds0["f"].shape[1:])
+    np.testing.assert_allclose(arr0, ds0["f"].sel(time=_TIME_DS_TIMES[0]).values)
+    verts0 = _contour_vertices(fig0.axes[0])
+    # 独立計算: 固定した時刻の断面の値域 (2000〜2509) に等値線レベルが入る = 線が存在する
+    sel1 = ds1["f"].sel(time=ds1_time).values
+    assert sel1.min() < 2100.0 < 2400.0 < sel1.max()
+    assert verts0.size > 0
+
+    panel["selection"] = {"time": _TIME_DS_TIMES[1]}
+    fig1 = _render(panel)
+    arr1 = _qm_array(fig1.axes[0], ds0["f"].shape[1:])
+    np.testing.assert_allclose(arr1, ds0["f"].sel(time=_TIME_DS_TIMES[1]).values)
+    assert not np.allclose(arr0, arr1)                      # 追従層は変わる
+    np.testing.assert_array_equal(_contour_vertices(fig1.axes[0]), verts0)   # 固定層は不変
+
+    # 固定を外す (time_fixed=False、selection から time を除く) → パネルの時刻は ds1 に無い
+    panel["layers"][1]["time_fixed"] = False
+    panel["layers"][1]["selection"] = {}
+    with pytest.raises(mc_render.RenderError) as ei:
+        _render(panel)
+    assert ei.value.msg_id == "selection_not_in_index"
+    assert ei.value.params["dataset_id"] == "ds1"
+
+
+def test_layer_time_fixed_stays_through_animation_frames():
+    """時刻送り (iter_frames) で固定層の等値線は全コマ同一、追従層の塗りは各コマの時刻の断面。
+    time_fixed=False の層は (旧来どおり) コマの時刻で上書きされ、ds1 に無い時刻なので最初のコマで
+    RenderError になる。"""
+    ds0, ds1 = _map_time_ds(), _map_time_ds(shift_hours=3)
+    _use(ds0)
+    _DATASETS["ds1"] = ds1
+    ds1_time = str(ds1["time"].values[2])[:19]
+    cfg = mc_config.default_figure_config()
+    cfg["panels"] = [_fixed_time_panel(ds1_time)]
+    verts, arrays = [], []
+    for fig in mc_render.iter_frames(cfg, _DATASETS, time_values=_TIME_DS_TIMES):
+        verts.append(_contour_vertices(fig.axes[0]))
+        arrays.append(_qm_array(fig.axes[0], ds0["f"].shape[1:]))
+        plt.close(fig)
+    assert len(verts) == 3
+    for v in verts[1:]:
+        np.testing.assert_array_equal(v, verts[0])
+    for tv, arr in zip(_TIME_DS_TIMES, arrays):
+        np.testing.assert_allclose(arr, ds0["f"].sel(time=tv).values)
+
+    cfg["panels"][0]["layers"][1]["time_fixed"] = False
+    with pytest.raises(mc_render.RenderError) as ei:
+        next(iter(mc_render.iter_frames(cfg, _DATASETS, time_values=_TIME_DS_TIMES)))
+    assert ei.value.msg_id == "selection_not_in_index"
+    assert ei.value.params["value"] == _TIME_DS_TIMES[0]

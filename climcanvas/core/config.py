@@ -945,6 +945,7 @@ def default_fill_between_layer(dataset_id: str, variable: str,
         "variable_upper": variable_upper,  # 上側のカーブ。None なら baseline を使う
         "baseline": float(baseline),       # variable_upper が None のときの上側 (定数)
         "selection": {},                   # variable 用の次元固定
+        "time_fixed": False,      # レイヤーの時刻をアニメーションで固定 (default_fill_layer 参照)
         "selection_upper": {},             # variable_upper 用の次元固定 (baseline モードでは無視)
         "averages": {},                    # variable 用の範囲平均 (default_fill_layer 参照)
         "averages_upper": {},              # variable_upper 用の範囲平均
@@ -980,6 +981,7 @@ def default_stackplot_layer(dataset_id: str, variables: list) -> dict:
         # 積み順 (リスト先頭が下、末尾が上)
         "variables": list(variables),
         "selection": {},
+        "time_fixed": False,      # レイヤーの時刻をアニメーションで固定 (default_fill_layer 参照)
         "averages": {},                    # レイヤー固有の範囲平均 (default_fill_layer 参照)
         "style": {
             "alpha": 0.8,
@@ -1008,6 +1010,7 @@ def default_bar_layer(dataset_id: str, variable: str) -> dict:
         "dataset_id": dataset_id,
         "variable": variable,
         "selection": {},
+        "time_fixed": False,      # レイヤーの時刻をアニメーションで固定 (default_fill_layer 参照)
         "averages": {},                  # レイヤー固有の範囲平均 (default_fill_layer 参照)
         "style": {
             "orientation": "vertical",   # "vertical" (ax.bar) | "horizontal" (ax.barh)
@@ -1056,6 +1059,7 @@ def default_line_layer(dataset_id: str, variable: str) -> dict:
         # 使わない (x は panel.x_dim)
         "x_dim": None,
         "selection": {},          # レイヤー固有の次元固定 (default_fill_layer 参照)
+        "time_fixed": False,      # レイヤーの時刻をアニメーションで固定 (default_fill_layer 参照)
         "averages": {},           # レイヤー固有の範囲平均 (default_fill_layer 参照)
         "style": {
             "color": None,            # None = matplotlib のカラーサイクル
@@ -1123,6 +1127,7 @@ def default_line_bundle_layer(dataset_id: str, variable: str,
         "variable": variable,
         "bundle_dim": bundle_dim,  # この次元の全スライスを重ね描き (x_dim・時刻以外)
         "selection": {},           # レイヤー固有の次元固定 (default_fill_layer 参照)
+        "time_fixed": False,      # レイヤーの時刻をアニメーションで固定 (default_fill_layer 参照)
         "averages": {},            # レイヤー固有の範囲平均 (default_fill_layer 参照)
         "summaries": [],           # 統計線のリスト (default_bundle_summary)
         "style": {
@@ -1247,6 +1252,11 @@ def default_fill_layer(dataset_id: str, variable: str) -> dict:
         # レイヤー固有の次元固定 (例: 鉛直レベル)。panel.selection と
         # マージされ、同じ dim については layer 側が優先される
         "selection": {},
+        # True ならこのレイヤーの時刻 (selection[time]) をパネルの時刻送りから外す
+        # (アニメーションで固定したまま。render.iter_frames の上書きと scriptgen の
+        # _sel_arg の変数化が見る)。静的描画は selection の合成 (layer 側優先) だけで
+        # 決まり、この値は見ない。docs/layer_time_fixed_plan.md
+        "time_fixed": False,
         # レイヤー固有の範囲平均 (鉛直断面で経度/緯度方向に平均する等)。
         # {dim: {"op": "mean"|"weighted_mean", "range": [lo, hi]}}。
         # selection と averages は同じ dim について排他 (UI 側で1つに絞る)。
@@ -1290,6 +1300,7 @@ def default_hatch_layer(dataset_id: str, variable: str) -> dict:
         "dataset_id": dataset_id,
         "variable": variable,
         "selection": {},          # レイヤー固有の次元固定 (default_fill_layer 参照)
+        "time_fixed": False,      # レイヤーの時刻をアニメーションで固定 (default_fill_layer 参照)
         "averages": {},           # レイヤー固有の範囲平均 (default_fill_layer 参照)
         "style": {
             "levels": [0.0, 1.0],     # [下限, 上限] の範囲にハッチを掛ける (変換後の値)
@@ -1312,6 +1323,7 @@ def default_contour_layer(dataset_id: str, variable: str) -> dict:
         "dataset_id": dataset_id,
         "variable": variable,
         "selection": {},          # レイヤー固有の次元固定 (default_fill_layer 参照)
+        "time_fixed": False,      # レイヤーの時刻をアニメーションで固定 (default_fill_layer 参照)
         "averages": {},           # レイヤー固有の範囲平均 (default_fill_layer 参照)
         "style": {
             # レベル指定 (fill と同じ流儀)。levels: int = レベル数 (vmin/vmax
@@ -1363,6 +1375,7 @@ def default_vector_layer(dataset_id: str, u_variable: str, v_variable: str,
         "v_variable": v_variable,
         "v_dataset_id": v_dataset_id,   # y 成分の dataset (None = dataset_id と同じ)
         "selection": {},          # レイヤー固有の次元固定 (default_fill_layer 参照)
+        "time_fixed": False,      # レイヤーの時刻をアニメーションで固定 (default_fill_layer 参照)
         "averages": {},           # レイヤー固有の範囲平均 (default_fill_layer 参照)
         "style": {
             "color": "black",
@@ -1421,6 +1434,7 @@ def default_stream_layer(dataset_id: str, u_variable: str, v_variable: str,
         "v_variable": v_variable,
         "v_dataset_id": v_dataset_id,   # y 成分の dataset (None = dataset_id と同じ)
         "selection": {},          # レイヤー固有の次元固定 (default_fill_layer 参照)
+        "time_fixed": False,      # レイヤーの時刻をアニメーションで固定 (default_fill_layer 参照)
         "averages": {},           # レイヤー固有の範囲平均 (default_fill_layer 参照)
         "style": {
             "color": "black",         # use_cmap=False のときの線色

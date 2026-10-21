@@ -101,6 +101,14 @@ def _body(note: dict) -> str:
         return t("2 次元座標格子: 成分を東西・南北とみなして描く (格子相対風の回転なし)")
     if kind == "section_vector_components":
         return t("断面のベクトル・流線の成分は選んだ変数のまま (断面方向への射影はしない)")
+    if kind == "layer_time_fixed":
+        pv = note.get("panel_value")
+        if pv is not None and pv != note["value"]:
+            return t("時刻をこのレイヤーで固定: {dim} = {value} (パネルの時刻 {panel_value} とは別。"
+                     "時刻送りでも変わらない)",
+                     dim=note["dim"], value=note["value"], panel_value=pv)
+        return t("時刻をこのレイヤーで固定: {dim} = {value} (時刻送りでも変わらない)",
+                 dim=note["dim"], value=note["value"])
     if kind == "section_path":
         return _section_path_line(note)
     if kind == "terrain_mask":

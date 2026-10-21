@@ -241,6 +241,50 @@ def _default_dim_index(ds, dim, roles, choices):
     return min(range(len(choices)), key=lambda i: abs(choices[i] - target))
 
 
+def _layer_time_fix_ui(layer, ds, var_dims, roles, keep_dims, lid_prefix, panel=None,
+                       selection_keys=("selection",)):
+    """レイヤーごとの時刻固定 (docs/layer_time_fixed_plan.md Step 3)。
+
+    パネル側に時刻役割があり (roles["time"]、ds0 基準)、その次元が変数の次元にあって
+    描画軸 (keep_dims) でないときだけ出す。checkbox「時刻をこのレイヤーで固定する」を on に
+    すると、そのレイヤーの dataset 自身の時刻軸から selectbox で選び (index 選択、値は
+    ISO 文字列 = パネル側 selection_widgets と同じ表現)、layer[selection_keys][time] に入れて
+    layer["time_fixed"] = True にする。off では time を入れずパネルの時刻に従う
+    (time_fixed = False)。静的描画は selection の合成 (層側優先) で決まり、アニメーションでは
+    render.iter_frames / scriptgen が time_fixed の層を据え置く。
+    widget key は `{lid_prefix}_tfix_{dim}` / `{lid_prefix}_tsel_{dim}`。ds0 に時刻役割が無い
+    読み込み順で時刻が普通の次元として `{lid_prefix}_sel_{dim}` に出る既存経路とは key を分ける。
+    selectbox の index が軸の長さを超えるとき (ファイル差し替え後) は末尾に丸める。
+    panel (選択中のパネル設定の一部) があれば caption にパネルの時刻を併記する。
+    """
+    time_dim = roles.get("time") if roles else None
+    if (not time_dim or time_dim in keep_dims or time_dim not in var_dims
+            or time_dim not in ds.coords):
+        return
+    fixed = st.checkbox(
+        t("時刻をこのレイヤーで固定する"), value=False, key=f"{lid_prefix}_tfix_{time_dim}",
+        help=t("パネルの時刻と無関係に、このレイヤーだけ別の時刻を描く (別ファイルの気候値を"
+               "背景に重ねるなど)。アニメーションの時刻送りでもこの時刻のまま"))
+    layer["time_fixed"] = bool(fixed)
+    if not fixed:
+        return
+    labels, sel_vals = time_labels_and_values(ds[time_dim].values)
+    key = f"{lid_prefix}_tsel_{time_dim}"
+    cur = st.session_state.get(key)
+    if not isinstance(cur, int) or not (0 <= cur < len(labels)):
+        st.session_state[key] = 0 if cur is None else len(labels) - 1
+    idx = st.selectbox(t("時刻 ({dim})", dim=time_dim), range(len(labels)),
+                       format_func=lambda i, L=labels: L[i], key=key)
+    for k in selection_keys:
+        layer.setdefault(k, {})[time_dim] = sel_vals[idx]
+    panel_time = ((panel or {}).get("selection") or {}).get(time_dim)
+    if panel_time is not None:
+        st.caption(t("このレイヤーの時刻: {value} (パネルの時刻: {panel_value})",
+                     value=labels[idx], panel_value=str(panel_time)))
+    else:
+        st.caption(t("このレイヤーの時刻: {value}", value=labels[idx]))
+
+
 def _layer_dim_picker(ds, var_dims, roles, keep_dims, lid_prefix):
     """変数の次元のうち keep_dims にも時刻にも入らないものを selectbox で固定する。
 
@@ -600,6 +644,7 @@ def fill_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         else:
             layer["selection"] = _layer_dim_picker(
                 ds, ds[var].dims, roles, keep_dims, f"fill_{lid}")
+        _layer_time_fix_ui(layer, ds, ds[var].dims, roles, keep_dims, f"fill_{lid}", panel)
     s = layer["style"]
     s["method"] = st.radio(t("描画方法"), list(_FILL_METHOD_LABELS),
                             format_func=tr_labels(_FILL_METHOD_LABELS).get,
@@ -650,6 +695,7 @@ def contour_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         else:
             layer["selection"] = _layer_dim_picker(
                 ds, ds[var].dims, roles, keep_dims, f"cont_{lid}")
+        _layer_time_fix_ui(layer, ds, ds[var].dims, roles, keep_dims, f"cont_{lid}", panel)
     s = layer["style"]
     color_mode = st.radio(t("線の色付け"), list(_CMODE_LABELS),
                           format_func=tr_labels(_CMODE_LABELS).get, horizontal=True,
@@ -743,6 +789,7 @@ def vector_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         else:
             layer["selection"] = _layer_dim_picker(
                 ds, ds[u_var].dims, roles, keep_dims, f"vec_{lid}")
+        _layer_time_fix_ui(layer, ds, ds[u_var].dims, roles, keep_dims, f"vec_{lid}", panel)
     s = layer["style"]
     color_mode = st.radio(t("ベクトルの色付け"), list(_CMODE_MAG_LABELS),
                           format_func=tr_labels(_CMODE_MAG_LABELS).get,
@@ -877,6 +924,7 @@ def stream_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         else:
             layer["selection"] = _layer_dim_picker(
                 ds, ds[u_var].dims, roles, keep_dims, f"strm_{lid}")
+        _layer_time_fix_ui(layer, ds, ds[u_var].dims, roles, keep_dims, f"strm_{lid}", panel)
     s = layer["style"]
     c1, c2, c3 = st.columns(3)
     s["density"] = float(c1.number_input(
@@ -935,6 +983,7 @@ def hatch_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         else:
             layer["selection"] = _layer_dim_picker(
                 ds, ds[var].dims, roles, keep_dims, f"hatch_{lid}")
+        _layer_time_fix_ui(layer, ds, ds[var].dims, roles, keep_dims, f"hatch_{lid}", panel)
     p = layer_preview_data(panel, layer, datasets, keep_dims)
     # 閾値は「値の変換」後の単位なので既定値も変換後の範囲から作る
     dmin, dmax = transformed_range(f"hatch_{lid}", float(p.min()), float(p.max()))
@@ -1033,6 +1082,7 @@ def line_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         else:
             layer["selection"] = _layer_dim_picker(
                 ds, ds[var].dims, roles, keep_dims, f"line_{lid}")
+        _layer_time_fix_ui(layer, ds, ds[var].dims, roles, keep_dims, f"line_{lid}", panel)
     s = layer["style"]
     auto_color = st.checkbox(t("色を自動 (カラーサイクル)"), value=True,
                               key=f"line_autocolor_{lid}")
@@ -1108,6 +1158,7 @@ def line_bundle_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         else:
             layer["selection"] = _layer_dim_picker(
                 ds, ds[var].dims, roles, keep, f"bundle_{lid}")
+        _layer_time_fix_ui(layer, ds, ds[var].dims, roles, keep, f"bundle_{lid}", panel)
     s = layer["style"]
     s["color"] = color_selector(t("線の色"), "#808080", key=f"bundle_color_{lid}",
                                  meta_store=s, meta_key="color")
@@ -1263,6 +1314,10 @@ def fill_between_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
     layer["selection_upper"] = selection_upper
     layer["averages"] = averages_lower
     layer["averages_upper"] = averages_upper
+    if roles is not None:
+        _layer_time_fix_ui(layer, ds, ds[var].dims, roles, keep_dims, f"fb_{lid}", panel,
+                           selection_keys=(("selection", "selection_upper")
+                                           if var_upper else ("selection",)))
     s = layer["style"]
     # baseline モードのみ「上下で色を変える」オプションを出す
     split_color = False
@@ -1350,6 +1405,7 @@ def stackplot_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         else:
             layer["selection"] = _layer_dim_picker(
                 ds, ds[sel_vars[0]].dims, roles, keep_dims, f"sp_{lid}")
+        _layer_time_fix_ui(layer, ds, ds[sel_vars[0]].dims, roles, keep_dims, f"sp_{lid}", panel)
     s = layer["style"]
     s["alpha"] = float(st.slider(
         t("透明度 (alpha)"), 0.0, 1.0, 0.8, 0.05, key=f"sp_alpha_{lid}"))
@@ -1401,6 +1457,7 @@ def bar_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         else:
             layer["selection"] = _layer_dim_picker(
                 ds, ds[var].dims, roles, keep_dims, f"bar_{lid}")
+        _layer_time_fix_ui(layer, ds, ds[var].dims, roles, keep_dims, f"bar_{lid}", panel)
     s = layer["style"]
     s["orientation"] = st.radio(
         t("向き"), list(_BAR_ORIENT_LABELS), format_func=tr_labels(_BAR_ORIENT_LABELS).get,

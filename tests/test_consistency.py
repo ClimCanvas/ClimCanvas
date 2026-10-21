@@ -2044,6 +2044,29 @@ def _multi_dataset_two_files_config():
     return cfg
 
 
+def _multi_dataset_time_fixed_config(ds1_time: str):
+    """ds0 の塗り (t) はパネルの時刻に従い、ds1 (時刻軸が 3 時間ずれた別ファイル) の等値線 (z) は
+    レイヤー側で時刻を固定する (time_fixed。docs/layer_time_fixed_plan.md)。"""
+    cfg = _multi_dataset_two_files_config()
+    contour = cfg["panels"][0]["layers"][1]
+    contour["selection"] = {"time": ds1_time}
+    contour["time_fixed"] = True
+    return cfg
+
+
+def test_multi_dataset_layer_time_fixed_other_file(sample_path, shifted_time_sample_path,
+                                                   tmp_path):
+    """時刻軸の合わない別ファイルの層をレイヤー側の時刻で固定して重ねる (静的)。
+    静的描画は selection の合成 (layer 側優先) で決まり、time_fixed は見ない。"""
+    cfg = _multi_dataset_time_fixed_config("2024-01-01T09:00:00")
+    _assert_multi_dataset_match(
+        cfg,
+        dataset_paths={"ds0": sample_path, "ds1": shifted_time_sample_path},
+        dataset_renames={},
+        tmp_path=tmp_path,
+    )
+
+
 def test_multi_dataset_same_file_two_layers(sample_path, tmp_path):
     """同じファイルを ds0, ds1 として読み、別レイヤーから使う。rename なし。"""
     cfg = _multi_dataset_two_files_config()
@@ -4008,16 +4031,35 @@ def test_animation_render_and_script_produce_identical_gif(sample_path, tmp_path
     _assert_animation_gif_matches(cfg, sample_path, time_values, tmp_path)
 
 
+def test_animation_time_fixed_layer_gif(sample_path, shifted_time_sample_path, tmp_path):
+    """time_fixed のレイヤー (別ファイル ds1、独自の時刻) は時刻送りで据え置き、ds0 の塗りだけ進む。
+    render.iter_frames (レイヤー側の上書きを skip) と生成スクリプト (そのレイヤーの .sel(time=...) を
+    リテラルのまま出す) がフレーム単位で一致すること (docs/layer_time_fixed_plan.md Step 2)。"""
+    cfg = _multi_dataset_time_fixed_config("2024-01-01T09:00:00")
+    time_values = ["2024-01-01T00:00:00", "2024-01-01T06:00:00", "2024-01-01T12:00:00"]
+    paths = {"ds0": sample_path, "ds1": shifted_time_sample_path}
+    # スクリプトの .sel: 追従層は time_value 変数、固定層はリテラル
+    datasets = {dsid: mc_dataset.open_path_spec(p) for dsid, p in paths.items()}
+    script = mc_scriptgen.generate_animation_script(
+        cfg, datasets, paths, time_values=time_values,
+        output_path=str(tmp_path / "x.gif"), fps=4, frame_dpi=80)
+    assert "ds0['t'].sel(time=time_value" in script
+    assert "ds1['z'].sel(time='2024-01-01T09:00:00'" in script
+    _assert_animation_gif_matches(cfg, paths, time_values, tmp_path)
+
+
 def _assert_animation_gif_matches(cfg, ds_spec, time_values, tmp_path):
     """render.save_animation_gif と生成スクリプトの GIF がフレーム単位で一致することを検証する。
-    ds_spec は 1 ファイルのパスでも、ワイルドカード・一覧テキスト (複数ファイルの結合) でもよい。"""
-    datasets = {"ds0": mc_dataset.open_path_spec(ds_spec)}
-    sample_path = ds_spec
+    ds_spec は 1 ファイルのパスでも、ワイルドカード・一覧テキスト (複数ファイルの結合) でも、
+    {dsid: path} の dict (複数 dataset) でもよい。"""
+    import json
+    dataset_paths = dict(ds_spec) if isinstance(ds_spec, dict) else {"ds0": ds_spec}
+    datasets = {dsid: mc_dataset.open_path_spec(p) for dsid, p in dataset_paths.items()}
 
     # 1) 生成スクリプトでアニメーション GIF を作る (コールドプロセス)
     script_gif = tmp_path / "script.gif"
     script = mc_scriptgen.generate_animation_script(
-        cfg, datasets, {"ds0": sample_path},
+        cfg, datasets, dataset_paths,
         time_values=time_values, output_path=str(script_gif), fps=4, frame_dpi=80,
     )
     script_path = tmp_path / "anim.py"
@@ -4035,7 +4077,7 @@ def _assert_animation_gif_matches(cfg, ds_spec, time_values, tmp_path):
     cfg_path = tmp_path / "config.json"
     cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
     result = subprocess.run(
-        [sys.executable, str(runner_path), str(cfg_path), sample_path,
+        [sys.executable, str(runner_path), str(cfg_path), json.dumps(dataset_paths),
          json.dumps(time_values), str(app_gif), _ROOT],
         capture_output=True, text=True, env=env, cwd=tmp_path)
     assert result.returncode == 0, f"render.save_animation_gif 実行失敗:\n{result.stderr}"
@@ -4059,7 +4101,9 @@ from climcanvas.core import render as mc_render
 from climcanvas.core import dataset as mc_dataset
 
 cfg = json.loads(open(sys.argv[1]).read())
-datasets = {"ds0": mc_dataset.open_path_spec(sys.argv[2])}
+spec = sys.argv[2]  # パス (ds0 のみ) か {dsid: path} の JSON
+paths = json.loads(spec) if spec.startswith("{") else {"ds0": spec}
+datasets = {dsid: mc_dataset.open_path_spec(p) for dsid, p in paths.items()}
 time_values = json.loads(sys.argv[3])
 centers = json.loads(sys.argv[6]) if len(sys.argv) > 6 else None
 hold = int(sys.argv[7]) if len(sys.argv) > 7 else 1
