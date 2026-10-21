@@ -1352,3 +1352,206 @@ def test_coord_files_same_as_first_file_checkbox(curvilinear_bare_paths, curvili
     cfg = at.session_state["panel_cfg_0"]
     assert cfg["terrain"]["show"] and cfg["terrain"]["variable"] == "ps"
     assert any("地形マスク" in m.value for m in at.markdown)
+
+
+# --- 複数ファイルの時間結合 (docs/multifile_glob_plan.md Step 3) ---
+# データは conftest の multifile_sample_dir (sample_atmos.nc を時刻ごとに 8 ファイルへ分割)
+
+def _multifile_spec(multifile_sample_dir):
+    import os as _os
+    return _os.path.join(multifile_sample_dir, "sample_atmos_*.nc")
+
+
+def test_multifile_glob_add_and_file_info(multifile_sample_dir):
+    """パス欄にワイルドカードを書いて「追加」: エントリの path はパターンのまま保存され、
+    一覧に「(8 ファイル)」、ファイル情報に結合したファイルの範囲と一覧が出て、
+    地図モードが 8 時刻ぶん開く。再現スクリプトは open_mfdataset を使う。"""
+    spec = _multifile_spec(multifile_sample_dir)
+    at = AppTest.from_file(_APP_PATH, default_timeout=60)
+    at.run()
+    at.text_input(key="_new_file_path").set_value(spec)
+    at.run()
+    _button(at, "add_file").set_value(True)
+    at.run()
+    assert not at.exception
+    assert not at.error, [e.value for e in at.error]
+    assert at.session_state["datasets"] == [{"id": "ds0", "path": spec}]
+    assert any("(8 ファイル)" in m.value for m in at.markdown)
+    assert any("8 ファイルを結合" in c.value
+               and "sample_atmos_2024010100.nc 〜 sample_atmos_2024010218.nc" in c.value
+               for c in at.caption)
+    listing = [c.value for c in at.code if "sample_atmos_2024010112.nc" in c.value]
+    assert listing and listing[0].count("\n") == 7
+    assert "水平断面図" in at.selectbox(key="plot_mode_0").options
+    # 時刻送りが 8 時刻ぶん (結合された time 軸) 動く
+    at.session_state["sel_map0_time"] = 7
+    at.run()
+    assert not at.exception
+    assert not at.error, [e.value for e in at.error]
+    scripts = [c.value for c in at.code if "xr.open_mfdataset(" in c.value]
+    assert scripts and "needs dask" in scripts[0]
+    assert not any("xr.open_dataset(" in c.value for c in at.code)
+
+
+def test_multifile_glob_no_match_is_rejected(multifile_sample_dir):
+    """一致 0 件のワイルドカードは「追加」で弾かれ (エントリは増えない)、
+    セッション復元で注入されたときは読み込み時に弾かれる。"""
+    import os as _os
+    bad = _os.path.join(multifile_sample_dir, "nothing_*.nc")
+    at = AppTest.from_file(_APP_PATH, default_timeout=60)
+    at.run()
+    at.text_input(key="_new_file_path").set_value(bad)
+    at.run()
+    _button(at, "add_file").set_value(True)
+    at.run()
+    assert not at.exception
+    assert at.error and "パターンに一致するファイルがありません" in at.error[0].value
+    assert at.session_state["datasets"] == []  # AppTest の session_state に .get は無い
+    # セッション復元をシミュレート
+    at.session_state["datasets"] = [{"id": "ds0", "path": bad}]
+    at.run()
+    assert not at.exception
+    assert at.error and "パターンに一致するファイルがありません" in at.error[0].value
+
+
+def test_multifile_list_file_add(multifile_sample_dir, tmp_path):
+    """一覧テキスト (.lst、1 行 1 絶対パス、行内ワイルドカード可) を欄に書いて「追加」できる。
+    相対パスの行があれば行番号つきで弾かれる。"""
+    import os as _os
+    files = sorted(_os.listdir(multifile_sample_dir))
+    lst = tmp_path / "files.lst"
+    lst.write_text("# 3 時刻ぶん\n"
+                   f"{_os.path.join(multifile_sample_dir, files[1])}\n"
+                   f"{_os.path.join(multifile_sample_dir, '*_2024010112.nc')}\n"
+                   f"{_os.path.join(multifile_sample_dir, files[0])}\n", encoding="utf-8")
+    at = AppTest.from_file(_APP_PATH, default_timeout=60)
+    at.run()
+    at.text_input(key="_new_file_path").set_value(str(lst))
+    at.run()
+    _button(at, "add_file").set_value(True)
+    at.run()
+    assert not at.exception
+    assert not at.error, [e.value for e in at.error]
+    assert at.session_state["datasets"][0]["path"] == str(lst)
+    assert any("(3 ファイル)" in m.value for m in at.markdown)
+    scripts = [c.value for c in at.code if "_files_ds0 = [" in c.value]
+    assert scripts and scripts[0].count("sample_atmos_") == 3
+    # 相対パスの行
+    bad = tmp_path / "rel.lst"
+    bad.write_text(f"{_os.path.join(multifile_sample_dir, files[0])}\n{files[1]}\n",
+                   encoding="utf-8")
+    at.text_input(key="_new_file_path").set_value(str(bad))
+    at.run()
+    _button(at, "add_file").set_value(True)
+    at.run()
+    assert not at.exception
+    assert at.error and "rel.lst:2: relative path is not allowed" in at.error[0].value
+    assert len(at.session_state["datasets"]) == 1
+
+
+def test_multifile_glob_allowed_dirs(sample_path, multifile_sample_dir, monkeypatch):
+    """許可ディレクトリ運用: 展開後のファイルが許可外に出るワイルドカードは「追加」でも
+    注入でも弾く。許可内のワイルドカードは通り、ブラウザの「このフォルダの *.nc をすべて」
+    ボタンがパターンを欄に入れる。"""
+    import os as _os
+    monkeypatch.setenv("CC_ALLOWED_DIRS", multifile_sample_dir)
+    outside = _os.path.join(_os.path.dirname(sample_path), "*.nc")
+    at = AppTest.from_file(_APP_PATH, default_timeout=60)
+    at.run()
+    at.text_input(key="_new_file_path").set_value(outside)
+    at.run()
+    _button(at, "add_file").set_value(True)
+    at.run()
+    assert not at.exception
+    assert at.error and "許可ディレクトリの外" in at.error[0].value
+    assert at.session_state["datasets"] == []  # AppTest の session_state に .get は無い
+    # 注入
+    at.session_state["datasets"] = [{"id": "ds0", "path": outside}]
+    at.run()
+    assert not at.exception
+    assert at.error and "許可ディレクトリの外" in at.error[0].value
+    at.session_state["datasets"] = []
+    at.run()
+    # ブラウザのボタン → 欄に {dir}/*.nc → 追加できる
+    _button(at, "_browse_allnc").set_value(True)
+    at.run()
+    at.run()
+    assert at.session_state["_new_file_path"] == _os.path.join(multifile_sample_dir, "*.nc")
+    _button(at, "add_file").set_value(True)
+    at.run()
+    assert not at.exception
+    assert not at.error, [e.value for e in at.error]
+    assert at.session_state["datasets"][0]["path"] == _os.path.join(multifile_sample_dir, "*.nc")
+    assert any("(8 ファイル)" in m.value for m in at.markdown)
+    # 座標ファイルの欄のブラウザにはこのボタンは出ない
+    keys = {b.key for b in at.get("button")}
+    assert not any(k.startswith("_coordbrowse_") and k.endswith("_allnc") for k in keys)
+
+
+def test_multifile_list_file_from_allowed_dir_browser(multifile_sample_dir, tmp_path, monkeypatch):
+    """許可ディレクトリのブラウザは一覧テキスト (.lst) も一覧し、選ぶと欄に入って「追加」できる
+    (ユーザー要望 2026-10-21。.txt は一覧扱いせず並べもしない)。許可ディレクトリが 2 つ (一覧の置き場とデータ)
+    でも、一覧の各行が許可内なら通る。座標ファイルの欄のブラウザには .lst を出さない。"""
+    import os as _os
+    files = sorted(_os.listdir(multifile_sample_dir))
+    lst_dir = tmp_path / "lists"
+    lst_dir.mkdir()
+    (lst_dir / "jan.lst").write_text(
+        "\n".join(_os.path.join(multifile_sample_dir, f) for f in files[:2]) + "\n",
+        encoding="utf-8")
+    (lst_dir / "notes.txt").write_text("not a list\n", encoding="utf-8")
+    monkeypatch.setenv("CC_ALLOWED_DIRS", f"{lst_dir}:{multifile_sample_dir}")
+    at = AppTest.from_file(_APP_PATH, default_timeout=60)
+    at.run()
+    keys = {b.key for b in at.get("button")}
+    assert "_browse_file_jan.lst" in keys
+    assert "_browse_file_notes.txt" not in keys
+    _button(at, "_browse_file_jan.lst").set_value(True)
+    at.run()
+    at.run()
+    assert at.session_state["_new_file_path"] == str(lst_dir / "jan.lst")
+    _button(at, "add_file").set_value(True)
+    at.run()
+    assert not at.exception
+    assert not at.error, [e.value for e in at.error]
+    assert at.session_state["datasets"][0]["path"] == str(lst_dir / "jan.lst")
+    assert any("(2 ファイル)" in m.value for m in at.markdown)
+
+
+def test_session_name_json_suffix_is_stripped(sample_path, tmp_path):
+    """「名前」欄に `test.json` と書いても `test.json.json` にはならず `test.json` に保存され、
+    由来バナー・上書きの選択肢・欄の下の表示が同じ名前 `test` を指す
+    (リモート運用での報告 2026-10-21)。既存の `old.json.json` は従来どおり `old.json` として
+    一覧に出て上書きできる。"""
+    import os as _os
+    from climcanvas.ui.state_io import normalize_session_name
+    assert normalize_session_name("  test.json ") == "test"
+    assert normalize_session_name("test.JSON") == "test"
+    assert normalize_session_name("test") == "test"
+    assert normalize_session_name("a.json.json") == "a.json"   # 1 つだけ外す
+    assert normalize_session_name(".json") == ""
+    session_dir = _os.environ["CC_SESSION_DIRS"].split(":")[0]
+    _os.makedirs(session_dir, exist_ok=True)
+    with open(_os.path.join(session_dir, "old.json.json"), "w", encoding="utf-8") as f:
+        f.write("{}")
+    at = _load_app(sample_path)
+    at.text_input(key="_session_save_name").set_value("test.json")
+    at.run()
+    assert any(c.value.endswith("test.json") and "保存されるファイル" in c.value
+               for c in at.caption)
+    _button(at, "_session_save_btn").set_value(True)
+    at.run()
+    assert not at.exception and not at.error, [e.value for e in at.error]
+    assert _os.path.isfile(_os.path.join(session_dir, "test.json"))
+    assert not _os.path.exists(_os.path.join(session_dir, "test.json.json"))
+    assert at.session_state["_session_provenance"] == {"kind": "slot", "name": "test"}
+    assert at.session_state["_session_overwrite_slot"] == "test"
+    assert any("『test』" in m.value for m in at.markdown)
+    # 既存の二重拡張子のスロットは stem のまま一覧に出て、上書きも同じファイルに向かう
+    assert "old.json" in at.selectbox(key="_session_overwrite_slot").options
+    at.selectbox(key="_session_overwrite_slot").set_value("old.json")
+    at.run()
+    _button(at, "_session_overwrite_btn").set_value(True)
+    at.run()
+    assert not at.exception and not at.error, [e.value for e in at.error]
+    assert _os.path.getsize(_os.path.join(session_dir, "old.json.json")) > 2

@@ -5542,6 +5542,30 @@ def bundle_band_kwargs(style: dict) -> dict:
     }
 
 
+def fill_between_kwargs(style: dict, color: str) -> dict:
+    """line fill (ax.fill_between) の色と枠線の kwargs (render/scriptgen 共用。ラベルは含めない)。
+
+    枠線は style["edge_linewidth"] で決まる:
+    - None: matplotlib の既定。color= を渡すと塗り色と同色・太さ 1 (patch.linewidth) の
+      縁が付き、alpha も掛かる。従来の見た目を変えないため既定はこれ
+    - 0: 縁なし (linewidth=0)
+    - 正: edge_color の不透明な枠線。透明度は塗りだけに掛けたいので facecolor に RGBA で
+      畳み込み、alpha= は渡さない (alpha= は縁にも掛かる)。RGBA は 4 桁に丸め、生成
+      スクリプトに同じ値を埋めてもピクセルが一致するようにする
+    """
+    alpha = float(style.get("alpha", 0.3))
+    lw = style.get("edge_linewidth")
+    if lw is None:
+        return {"color": color, "alpha": alpha}
+    lw = float(lw)
+    if lw <= 0:
+        return {"color": color, "alpha": alpha, "linewidth": 0.0}
+    face = tuple(round(float(c), 4) for c in mcolors.to_rgba(color, alpha))
+    return {"facecolor": face,
+            "edgecolor": style.get("edge_color") or "#000000",
+            "linewidth": lw}
+
+
 def bundle_lines_visible(style: dict, default: float) -> bool:
     """線の太さが正なら線を描く (render/scriptgen 共用)。
 
@@ -5701,7 +5725,6 @@ def _draw_fill_between_layer(ax, panel: dict, layer: dict, datasets: dict):
     var_upper = layer.get("variable_upper")
     color_above = style.get("color", "#1f77b4")
     color_below = style.get("color_below")  # None なら単色
-    alpha = float(style.get("alpha", 0.3))
     label = style.get("label")
     x_vals = da_low[panel["x_dim"]].values
     y_low = da_low.values
@@ -5712,7 +5735,7 @@ def _draw_fill_between_layer(ax, panel: dict, layer: dict, datasets: dict):
             selection_override=layer.get("selection_upper") or {},
             averages_override=layer.get("averages_upper") or {})
         da_high = apply_value_transform(da_high, style)
-        kwargs = {"color": color_above, "alpha": alpha}
+        kwargs = fill_between_kwargs(style, color_above)
         if label:
             kwargs["label"] = label
         ax.fill_between(x_vals, y_low, da_high.values, **kwargs)
@@ -5720,14 +5743,14 @@ def _draw_fill_between_layer(ax, panel: dict, layer: dict, datasets: dict):
     # baseline モード
     baseline = float(layer.get("baseline", 0.0))
     if not color_below or color_below == color_above:
-        kwargs = {"color": color_above, "alpha": alpha}
+        kwargs = fill_between_kwargs(style, color_above)
         if label:
             kwargs["label"] = label
         ax.fill_between(x_vals, y_low, baseline, **kwargs)
         return
     # 上下別色: where + interpolate=True で baseline 交点を綺麗に分割
-    kw_above = {"color": color_above, "alpha": alpha, "interpolate": True}
-    kw_below = {"color": color_below, "alpha": alpha, "interpolate": True}
+    kw_above = {**fill_between_kwargs(style, color_above), "interpolate": True}
+    kw_below = {**fill_between_kwargs(style, color_below), "interpolate": True}
     if label:
         kw_above["label"] = label  # 凡例には1つだけ載せる
     ax.fill_between(x_vals, y_low, baseline,

@@ -13,6 +13,7 @@ UI 部品は climcanvas/ui/ に分離してある:
 import copy
 import io
 import logging
+import json
 import os
 import time as time_mod
 
@@ -50,7 +51,8 @@ from climcanvas.ui.data_access import (_add_dataset_to_state,
                                        _remove_dataset_from_state,
                                        browse_into_callback,
                                        detect_grid_projection_cached,
-                                       load_dataset, load_dataset_with_coords)
+                                       load_dataset_spec, load_dataset_with_coords,
+                                       resolve_entry)
 from climcanvas.ui.panel_ui import (axis_basic_ui, axis_labels_ui,
                                     axis_settings_ui, axis_ticks_ui, boxes_ui,
                                     frame_background_ui,
@@ -69,7 +71,7 @@ from climcanvas.ui.state_io import (STARTUP_PRESET_PATH, _PRESET_ONLY_KEYS,
                                     _load_startup_preset_once, _load_session_dirs,
                                     _load_session_from_disk, _save_startup_preset,
                                     _save_session_to_disk, _serialize_session,
-                                    _session_path)
+                                    _session_path, normalize_session_name)
 from climcanvas.ui.widgets import (available_font_families,
                                    cjk_font_advice, cmap_selector,
                                    color_selector, common_fonts_available,
@@ -109,7 +111,7 @@ for _k in list(st.session_state.keys()):
 
 
 def _allowed_dir_browser(allowed_dirs: list[str], target_key: str,
-                         key_prefix: str = "_browse") -> None:
+                         key_prefix: str = "_browse", allow_multi: bool = False) -> None:
     """許可ディレクトリの中を辿って .nc を選ぶ Streamlit ネイティブのブラウザ。
 
     リモート運用想定 (tkinter ダイアログが動かないヘッドレス環境用)。選んだファイルの
@@ -117,6 +119,10 @@ def _allowed_dir_browser(allowed_dirs: list[str], target_key: str,
     より前に呼ぶこと** (インスタンス化後の書き換えは Streamlit が拒否する)。
     key_prefix で widget key を分ける: 本体ファイルの欄は "_browse" (従来の key と同じ)、
     座標ファイルの欄は "_coordbrowse_{index}"。
+    allow_multi=True (本体ファイルの欄) では「このフォルダの *.nc をすべて」ボタンを出して
+    `{dir}/*.nc` のワイルドカードを欄に入れ、一覧テキスト (.lst) も一覧して選べるようにする
+    (複数ファイルの時間結合、docs/multifile_glob_plan.md)。座標ファイルの欄には出さない
+    (1 ファイル限定)。一覧テキストの拡張子は .lst だけ (2026-10-21 ユーザー判断)。
     """
     st.caption(t("許可されているディレクトリ: {dirs}",
                  dirs=", ".join(f"`{d}`" for d in allowed_dirs)))
@@ -161,6 +167,9 @@ def _allowed_dir_browser(allowed_dirs: list[str], target_key: str,
     ncfiles = [e for e in entries
                if e.lower().endswith(".nc")
                and os.path.isfile(os.path.join(cur, e))]
+    lstfiles = [e for e in entries
+                if allow_multi and e.lower().endswith(".lst")
+                and os.path.isfile(os.path.join(cur, e))]
     if subdirs:
         st.markdown(t("**サブディレクトリ**"))
         for d in subdirs:
@@ -169,12 +178,46 @@ def _allowed_dir_browser(allowed_dirs: list[str], target_key: str,
                 st.rerun()
     if ncfiles:
         st.markdown(t("**netCDF ファイル**"))
+        if allow_multi and st.button(t("このフォルダの *.nc をすべて"),
+                                    key=f"{key_prefix}_allnc", icon=":material/library_add:"):
+            st.session_state[target_key] = os.path.join(cur, "*.nc")
+            st.rerun()
         for f in ncfiles:
             if st.button(f"📄 {f}", key=f"{key_prefix}_file_{f}"):
                 st.session_state[target_key] = os.path.join(cur, f)
                 st.rerun()
-    elif not subdirs:
+    if lstfiles:
+        st.markdown(t("**一覧テキスト (.lst)**"))
+        for f in lstfiles:
+            if st.button(f"📋 {f}", key=f"{key_prefix}_file_{f}"):
+                st.session_state[target_key] = os.path.join(cur, f)
+                st.rerun()
+    if not ncfiles and not lstfiles and not subdirs:
         st.caption(t("(このディレクトリには .nc ファイルもサブディレクトリもありません)"))
+
+
+def _path_spec_error_message(spec: str, exc: Exception) -> str:
+    """dataset.resolve_path_spec の失敗 (英語の ValueError) を指定の種別に応じた表示文にする。
+    1 ファイル = 従来の「ファイルが見つかりません」、ワイルドカード = 一致なし、
+    一覧テキスト = 原文 (行番号つき) を添える。"""
+    kind = mc_dataset.classify_path_spec(spec)
+    if kind == mc_dataset.PATH_SPEC_GLOB:
+        return t("パターンに一致するファイルがありません: {path}", path=spec)
+    if kind == mc_dataset.PATH_SPEC_LIST:
+        return t("一覧テキストを読めませんでした: {exc}", exc=exc)
+    return t("ファイルが見つかりません: {path}", path=spec)
+
+
+def _entry_count_note(spec: str) -> str:
+    """読み込み済みファイルの一覧で、ワイルドカード・一覧テキストのエントリに「(N ファイル)」を
+    添える文字列 (1 ファイルと展開できないときは空。エラーは読み込み時に出す)。"""
+    if mc_dataset.classify_path_spec(spec) == mc_dataset.PATH_SPEC_SINGLE:
+        return ""
+    try:
+        n = len(mc_dataset.resolve_path_spec(spec))
+    except ValueError:
+        return ""
+    return " " + t("({n} ファイル)", n=n)
 
 
 # 座標ファイルのブラウザで選んだファイルの入れ先 (中立キー → 日本語原文)
@@ -404,7 +447,7 @@ with st.sidebar:
         st.markdown(t("**読み込み済みファイル**"))
         for i, item in enumerate(list(items)):
             c1, c2 = st.columns([5, 1])
-            c1.markdown(f"`{item['id']}`: `{item['path']}`")
+            c1.markdown(f"`{item['id']}`: `{item['path']}`" + _entry_count_note(item["path"]))
             # アイコンボタン (狭い列。文字ラベルは streamlit 1.64 以降折り返さず「削…」に切れる)
             if c2.button("", icon=":material/delete:", help=t("削除"),
                          key=f"_del_ds_{i}"):
@@ -423,11 +466,14 @@ with st.sidebar:
     # (リモート運用想定: tkinter ダイアログが動かないヘッドレス環境用)
     if _allowed_dirs:
         with st.expander(t("📁 許可ディレクトリから選ぶ"), expanded=False):
-            _allowed_dir_browser(_allowed_dirs, "_new_file_path")
+            _allowed_dir_browser(_allowed_dirs, "_new_file_path", allow_multi=True)
 
-    st.text_input(t("netCDFファイルのパス"), key="_new_file_path",
-                   help=t("許可ディレクトリ: {dirs}",
-                          dirs=", ".join(_allowed_dirs)) if _allowed_dirs else None)
+    _path_help = t("1 ファイルのパスのほか、ワイルドカード (例 `hgt/*.nc`) で複数ファイルを"
+                   "時間方向に結合して 1 つのデータセットとして開けます。1 行 1 パス (絶対パス) "
+                   "の一覧テキスト (.lst) も指定できます。")
+    if _allowed_dirs:
+        _path_help += "\n\n" + t("許可ディレクトリ: {dirs}", dirs=", ".join(_allowed_dirs))
+    st.text_input(t("netCDFファイルのパス"), key="_new_file_path", help=_path_help)
     _col_browse, _col_add = st.columns(2)
     # 参照ボタン: 許可ディレクトリ運用では非表示 (tkinter は使わない)
     if not _allowed_dirs:
@@ -435,16 +481,24 @@ with st.sidebar:
                             key="browse_file",
                             help=t("ネイティブのファイル選択ダイアログを開く"))
     if _col_add.button(t("追加"), type="primary", key="add_file"):
+        # 指定は 1 ファイル / ワイルドカード / 一覧テキスト (dataset.classify_path_spec)。
+        # 保存するのは指定文字列そのもの (絶対パス化したもの)。展開は読み込み時に毎回行う
         abspath = os.path.abspath(os.path.expanduser(
             st.session_state["_new_file_path"]))
-        if not _is_path_allowed(abspath, _allowed_dirs):
-            st.error(t("パス `{path}` は許可ディレクトリの外にあります。許可: {dirs}",
-                       path=abspath, dirs=_allowed_dirs))
-        elif os.path.isfile(abspath):
-            _add_dataset_to_state(abspath)
-            st.rerun()
-        else:
-            st.error(t("ファイルが見つかりません: {path}", path=abspath))
+        try:
+            _new_paths = mc_dataset.resolve_path_spec(abspath)
+        except ValueError as exc:
+            _new_paths = None
+            st.error(_path_spec_error_message(abspath, exc))
+        if _new_paths is not None:
+            # 許可ディレクトリの検査は指定文字列と展開後の全ファイルに対して行う
+            # (ワイルドカードや一覧で許可外のファイルに届かないように)
+            if not all(_is_path_allowed(p, _allowed_dirs) for p in [abspath, *_new_paths]):
+                st.error(t("パス `{path}` は許可ディレクトリの外にあります。許可: {dirs}",
+                           path=abspath, dirs=_allowed_dirs))
+            else:
+                _add_dataset_to_state(abspath)
+                st.rerun()
 
 # --- 編集中のセッションの由来バナー (メインエリア: タイトル直下に常時表示) ---
 # 色はタブと同じ対応: スロット = 青 (アプリを動かすマシン側) /
@@ -468,11 +522,15 @@ if not st.session_state.get("datasets"):
             "サンプルデータは `python scripts/make_sample_data.py` で生成できます。"))
     st.stop()
 
-# 全データセットを読み込む
+# 全データセットを読み込む。エントリの path は 1 ファイルのほかワイルドカード・一覧テキスト
+# (複数ファイルの時間結合、docs/multifile_glob_plan.md)。展開結果 (ファイル群と mtime) が
+# キャッシュキーで、座標ファイルの結び付けと投影の推定にも渡す
 datasets = {}
+_entry_files: dict[str, tuple[tuple[str, ...], tuple[float, ...]]] = {}
 for item in st.session_state["datasets"]:
     # 「追加」ボタンの検証だけでは不十分: セッションアップロード・サーバスロット復元は
     # session_state に直接パスを注入するため、読み込み直前にも必ず検証する
+    # (指定文字列と、展開後の全ファイル)
     if not _is_path_allowed(item["path"], _allowed_dirs):
         st.error(t("パス `{path}` ({dsid}) は許可ディレクトリの外にあります。"
                  "サイドバーの「削除」でこのファイルを外してください。"
@@ -480,7 +538,22 @@ for item in st.session_state["datasets"]:
                  path=item["path"], dsid=item["id"], dirs=_allowed_dirs))
         st.stop()
     try:
-        datasets[item["id"]] = load_dataset(item["path"], os.path.getmtime(item["path"]))
+        _entry_files[item["id"]] = resolve_entry(item["path"])
+    except ValueError as exc:
+        st.error(t("netCDFファイルを開けませんでした — {dsid} ({path}): {exc}",
+                 dsid=item["id"], path=item["path"],
+                 exc=_path_spec_error_message(item["path"], exc)))
+        st.stop()
+    _outside = [p for p in _entry_files[item["id"]][0]
+                if not _is_path_allowed(p, _allowed_dirs)]
+    if _outside:
+        st.error(t("パス `{path}` ({dsid}) は許可ディレクトリの外にあります。"
+                 "サイドバーの「削除」でこのファイルを外してください。"
+                 "許可: {dirs}",
+                 path=_outside[0], dsid=item["id"], dirs=_allowed_dirs))
+        st.stop()
+    try:
+        datasets[item["id"]] = load_dataset_spec(item["path"], *_entry_files[item["id"]])
     except Exception as exc:
         st.error(t("netCDFファイルを開けませんでした — {dsid} ({path}): {exc}",
                  dsid=item["id"], path=item["path"], exc=exc))
@@ -501,7 +574,7 @@ for item in st.session_state["datasets"]:
         else:
             try:
                 datasets[item["id"]] = load_dataset_with_coords(
-                    item["path"], os.path.getmtime(item["path"]), _coord_paths,
+                    item["path"], *_entry_files[item["id"]], _coord_paths,
                     tuple(os.path.getmtime(p) for p in _coord_paths))
             except Exception as exc:
                 st.error(t("座標ファイルを結び付けられませんでした — {dsid}: {exc}",
@@ -560,7 +633,7 @@ if mc_dataset.is_curvilinear(ds, roles):
     _item0 = st.session_state["datasets"][0]
     _cp0 = tuple(_item0.get("coord_paths") or [])
     _grid_projection = detect_grid_projection_cached(
-        _item0["path"], os.path.getmtime(_item0["path"]), _cp0,
+        _item0["path"], *_entry_files[_item0["id"]], _cp0,
         tuple(os.path.getmtime(p) for p in _cp0))
 
 with st.expander(t("ファイル情報"), expanded=False):
@@ -571,6 +644,15 @@ with st.expander(t("ファイル情報"), expanded=False):
     for item in st.session_state["datasets"]:
         _ds = datasets[item["id"]]
         st.markdown(f"**`{item['id']}`**: `{item['path']}`")
+        _multi = _ds.attrs.get(mc_dataset.MULTI_FILE_ATTR)
+        if _multi:
+            # 複数ファイルの結合: 展開結果 (読み込み時のもの) を見せる。再現スクリプトの
+            # コメント / 明示リストと同じ情報源 (MULTI_FILE_ATTR)
+            _mpaths = json.loads(_multi)["paths"]
+            st.caption(t("{n} ファイルを結合 ({first} 〜 {last})", n=len(_mpaths),
+                         first=os.path.basename(_mpaths[0]),
+                         last=os.path.basename(_mpaths[-1])))
+            st.code("\n".join(_mpaths), language=None, height=min(200, 24 * len(_mpaths) + 20))
         st.caption(t("データ変数"))
         st.dataframe(pd.DataFrame(mc_dataset.variable_summary(_ds))
                      .rename(columns=_col_labels))
@@ -705,21 +787,27 @@ with st.sidebar:
             _c_save_name, _c_save_btn = st.columns(
                 [3, 1], vertical_alignment="bottom")
             _session_name = _c_save_name.text_input(
-                t("新規ファイル名"), value="", placeholder=t("例: el-nino-2015"),
-                key="_session_save_name")
+                t("名前 (拡張子 .json は自動で付きます)"), value="",
+                placeholder=t("例: el-nino-2015"), key="_session_save_name")
+            # 名前はスロット名 (拡張子なし)。`test.json` と書かれても `.json` を外して
+            # `test.json.json` にならないようにし、保存されるファイル名を欄の下に示す
+            _slot_name = normalize_session_name(_session_name)
+            if _slot_name:
+                st.caption(t("保存されるファイル: {name}",
+                             name=md_plain(_session_path(_session_dir, _slot_name).name)))
             if _c_save_btn.button(t("保存"), key="_session_save_btn",
-                                    disabled=not _session_name.strip()):
+                                    disabled=not _slot_name):
                 try:
-                    n = _save_session_to_disk(_session_dir, _session_name.strip())
+                    n = _save_session_to_disk(_session_dir, _slot_name)
                     # 「作業の再開」のセッション一覧とメインの由来
                     # バナーはこのハンドラより前に描画済みのため st.rerun() で
                     # 即反映し、成功メッセージは _session_saved_msg 経由で持ち越す
                     st.session_state["_session_provenance"] = {
-                        "kind": "slot", "name": _session_name.strip()}
+                        "kind": "slot", "name": _slot_name}
                     st.session_state["_session_ow_pending"] = {
-                        "dir": _session_dir, "name": _session_name.strip()}
+                        "dir": _session_dir, "name": _slot_name}
                     st.session_state["_session_saved_msg"] = (
-                        n, str(_session_path(_session_dir, _session_name.strip())))
+                        n, str(_session_path(_session_dir, _slot_name)))
                     st.rerun()
                 except Exception as e:
                     st.error(t("保存失敗: {e}", e=e))

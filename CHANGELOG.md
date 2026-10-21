@@ -9,6 +9,25 @@ manual, FAQ, gallery) are not listed either.
 
 ## Unreleased
 
+## 1.03 — 2026-10-21
+
+### Added
+
+- Multiple netCDF files can be opened as one dataset combined along time: type a wildcard pattern in the file path box (for example `hgt/*.nc`), or a list file (`.lst`, one absolute path per line, wildcards allowed) and press "Add". In the allowed-directory browser a button picks all `*.nc` in the current folder, and `.lst` files are listed for selection. The file info shows which files were combined. Files whose grids differ or whose times overlap are rejected instead of being merged silently.
+- Reproduction scripts for such datasets use `xr.open_mfdataset` (this needs dask; scripts for a single file are unchanged and still need only xarray, matplotlib and cartopy). A wildcard is written as is with a comment recording how many files matched at generation time; a list file is written out as an explicit list of files.
+- Line fill layers (1-D plots): an "Edge" choice for the outline of the filled area — "Default" (matplotlib's default, a thin edge in the fill color, unchanged from before), "none", or "Show" with its own "Edge color" and "Edge width" (drawn opaque; the opacity applies to the fill only). The generated script passes it as `facecolor` / `edgecolor` / `linewidth`.
+
+### Changed
+
+- The README on GitHub now opens with a short animated demo of the GUI (the same recording as the home page of the website).
+- The About menu (top-right) now links to the Korean and Chinese versions of the website when the UI language is Korean or Simplified Chinese (previously those languages went to the English version).
+
+### Fixed
+
+- Saving a session to the server (or the local session directory) with a name that already ends in `.json` wrote `name.json.json`, while the lists showed `name.json`. The extension is now stripped from the typed name, the field is labelled as a name, and the file that will be written is shown under it. Sessions saved earlier with the doubled extension still appear and are overwritten as before.
+- Korean UI: the hexbin option "fill empty bins" was worded ambiguously (it read as "fill frequency"); the vector-key wording and the "lat/lon" wording are now consistent across labels and help texts.
+- Chinese UI: the grid-projection detection message now names the Lambert conformal conic projection the same way as the projection list.
+
 ## 1.02.4 — 2026-10-07
 
 ### Added

@@ -1066,6 +1066,59 @@ def test_fill_between_band_boundaries():
         assert _has_vertex(paths, x, y2), f"(x={x}, q={y2}) が帯の頂点にない"
 
 
+def test_fill_between_edge_modes():
+    """line fill の枠線 (style.edge_linewidth): None = matplotlib 既定 (塗り色と同色・
+    太さ patch.linewidth の縁、alpha も掛かる — 従来の見た目)、0 = 縁なし、
+    正 = edge_color の不透明な縁 (塗りの alpha は face だけに残る)。"""
+    import matplotlib as mpl
+    from matplotlib.collections import PolyCollection
+    from matplotlib.colors import to_rgba
+    ds = _bars_ds()
+    _use(ds)
+
+    def _pc(edge_linewidth, edge_color=None, color="#1f77b4", alpha=0.3,
+            variable_upper="q", baseline=0.0, color_below=None):
+        fb = mc_config.default_fill_between_layer("ds0", "p", variable_upper,
+                                                    baseline=baseline)
+        fb["style"].update({"color": color, "alpha": alpha,
+                            "edge_linewidth": edge_linewidth,
+                            "color_below": color_below})
+        if edge_color is not None:
+            fb["style"]["edge_color"] = edge_color
+        fig = _render(_line_panel_for([fb]))
+        pcs = [c for c in fig.axes[0].collections if isinstance(c, PolyCollection)]
+        assert pcs
+        return pcs
+
+    fill_rgba = to_rgba("#1f77b4", 0.3)
+    # None (既定): 旧設定と同じ — 縁は塗り色・alpha 付き、太さは rcParams の patch.linewidth
+    (pc,) = _pc(None)
+    np.testing.assert_allclose(pc.get_linewidths(), [mpl.rcParams["patch.linewidth"]])
+    np.testing.assert_allclose(pc.get_edgecolor()[0], fill_rgba)
+    np.testing.assert_allclose(pc.get_facecolor()[0], fill_rgba)
+    plt.close("all")
+    # 0: 縁なし
+    (pc,) = _pc(0.0)
+    np.testing.assert_allclose(pc.get_linewidths(), [0.0])
+    np.testing.assert_allclose(pc.get_facecolor()[0], fill_rgba)
+    plt.close("all")
+    # 正: 指定色の不透明な縁、塗りは alpha のまま
+    (pc,) = _pc(1.5, edge_color="#ff0000")
+    np.testing.assert_allclose(pc.get_linewidths(), [1.5])
+    np.testing.assert_allclose(pc.get_edgecolor()[0], (1.0, 0.0, 0.0, 1.0))
+    np.testing.assert_allclose(pc.get_facecolor()[0], fill_rgba, atol=1e-4)
+    plt.close("all")
+    # 上下別色 (ベースライン分割) でも両ポリゴンに同じ縁が付き、面の色は上下で違う
+    pcs = _pc(1.0, edge_color="#000000", variable_upper=None, baseline=5.0,
+              color="#d62728", color_below="#1f77b4")
+    assert len(pcs) == 2
+    for pc in pcs:
+        np.testing.assert_allclose(pc.get_linewidths(), [1.0])
+        np.testing.assert_allclose(pc.get_edgecolor()[0], (0.0, 0.0, 0.0, 1.0))
+    np.testing.assert_allclose(pcs[0].get_facecolor()[0], to_rgba("#d62728", 0.3), atol=1e-4)
+    np.testing.assert_allclose(pcs[1].get_facecolor()[0], to_rgba("#1f77b4", 0.3), atol=1e-4)
+
+
 def test_bar_heights_and_stack_and_dodge():
     ds = _bars_ds()
     _use(ds)

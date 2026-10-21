@@ -61,7 +61,8 @@ def _cases(sample_path, tmp_path):
 
 
 def _generate(cfg, ds_path, out_png) -> str:
-    datasets = {"ds0": mc_dataset.open_dataset(ds_path)}
+    # ds_path はワイルドカード・一覧テキスト (複数ファイルの結合) でもよい
+    datasets = {"ds0": mc_dataset.open_path_spec(str(ds_path))}
     return mc_scriptgen.generate_script(
         cfg, datasets, {"ds0": str(ds_path)},
         figure_output=str(out_png), figure_dpi=100, include_show=False)
@@ -209,3 +210,71 @@ def test_generated_script_with_terrain_is_standalone(curvilinear_sample_path,
                             env=env, capture_output=True, text=True, timeout=180)
     assert result.returncode == 0, f"実行失敗:\n{result.stderr}\n--- script ---\n{script}"
     assert out_png.exists()
+
+
+# --- 複数ファイルの時間結合 (docs/multifile_glob_plan.md Step 2、「dask の位置づけ」) ---
+
+def _poison_env(tmp_path, *, no_dask: bool = False) -> dict:
+    """climcanvas (no_dask なら dask も) を import 不能にした子プロセス用の環境変数。
+
+    climcanvas は import した瞬間に失敗する偽パッケージ。dask は偽パッケージ方式だと
+    xarray の import 側で失敗する (2026-10-21 実測) ので、sitecustomize で
+    sys.modules["dask"] = None にして「dask なし」として扱わせる (xarray はこの状態で
+    単一ファイルの読み書きと描画が動き、open_mfdataset だけ ImportError になる)。
+    """
+    poison_root = tmp_path / ("poison_nodask" if no_dask else "poison")
+    pkg = poison_root / "climcanvas"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text(
+        'raise ImportError("生成スクリプトが climcanvas に依存しています '
+        '(譲れないルール2違反)")', encoding="utf-8")
+    if no_dask:
+        (poison_root / "sitecustomize.py").write_text(
+            "import sys\nsys.modules['dask'] = None\n", encoding="utf-8")
+    return dict(os.environ, MPLBACKEND="Agg", PYTHONPATH=str(poison_root))
+
+
+def _run(script_path, env, cwd):
+    return subprocess.run([sys.executable, str(script_path)],
+                          capture_output=True, text=True, env=env, cwd=cwd)
+
+
+def test_multifile_script_is_standalone(multifile_sample_dir, tmp_path):
+    """ワイルドカードで結合した dataset のスクリプト: import は許可リスト内 (dask は書かれず
+    xarray の内部から読まれる) で、climcanvas 不在環境で実行できる。"""
+    spec = os.path.join(multifile_sample_dir, "sample_atmos_*.nc")
+    out_png = tmp_path / "multi.png"
+    script = _generate(_simple_config(), spec, out_png)
+    assert _import_roots(script) - _ALLOWED_ROOTS == set()
+    assert "import dask" not in script
+    script_path = tmp_path / "multi.py"
+    script_path.write_text(script, encoding="utf-8")
+    result = _run(script_path, _poison_env(tmp_path), tmp_path)
+    assert result.returncode == 0, f"climcanvas 不在環境で実行失敗:\n{result.stderr}"
+    assert out_png.exists()
+
+
+def test_single_file_scripts_run_without_dask(sample_path, multifile_sample_dir, tmp_path):
+    """単一ファイルのスクリプトは dask 無しでも動く (「dask の位置づけ」の約束: dask が要るのは
+    複数ファイルを結合したスクリプトだけ)。同じ環境で複数ファイルのスクリプトが dask 不足の
+    エラーになることも確かめ、依存の所在を固定する。"""
+    env = _poison_env(tmp_path, no_dask=True)
+    probe = subprocess.run([sys.executable, "-c", "import dask"],
+                           capture_output=True, text=True, env=env, cwd=tmp_path)
+    assert probe.returncode != 0, "dask の毒入れが機能していない (テスト自体の不備)"
+
+    for name, cfg, ds_path in _cases(sample_path, tmp_path):
+        out_png = tmp_path / f"{name}_nodask.png"
+        script_path = tmp_path / f"{name}_nodask.py"
+        script_path.write_text(_generate(cfg, ds_path, out_png), encoding="utf-8")
+        result = _run(script_path, env, tmp_path)
+        assert result.returncode == 0, f"{name}: dask 不在環境で実行失敗:\n{result.stderr}"
+        assert out_png.exists()
+
+    spec = os.path.join(multifile_sample_dir, "sample_atmos_*.nc")
+    script_path = tmp_path / "multi_nodask.py"
+    script_path.write_text(_generate(_simple_config(), spec, tmp_path / "multi_nodask.png"),
+                           encoding="utf-8")
+    result = _run(script_path, env, tmp_path)
+    assert result.returncode != 0
+    assert "dask" in result.stderr

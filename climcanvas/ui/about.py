@@ -29,7 +29,10 @@ FEEDBACK_FORMS = {
 FEEDBACK_VERSION_ENTRY = "entry.2010447076"
 REPO_URL = "https://github.com/ClimCanvas/ClimCanvas"
 SITE_URL = "https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/"   # 公式サイト (日本語。マニュアル・FAQ。CITATION.cff の url と同じ)
-SITE_URL_EN = SITE_URL + "en/"                                   # 英語版 (ja 以外の UI 言語はこちらへ。2026-10-03)
+SITE_URL_EN = SITE_URL + "en/"                                   # 英語版 (README・Issue フォームの前書きが指す。2026-10-03)
+# UI 言語 → サイトの言語ディレクトリ。サイト側の言語コードは中国語だけ zh (UI は zh_CN)。無い言語は英語版へ
+# (韓国語版・中国語版のサイトは 2026-10-15 に追加)
+SITE_LANG_DIRS = {"ja": "", "en": "en/", "ko": "ko/", "zh_CN": "zh/"}
 # Issue フォーム (bug.yml / feature.yml) の版の欄の id。選択画面 (issues/new/choose) は
 # クエリを選んだフォームに引き継がない (2026-09-27 に公開側で確認) ので、テンプレートを
 # 直接指定した URL を種別ごとに出す
@@ -53,8 +56,8 @@ def new_issue_url(version: str, template: str = "bug.yml") -> str:
 
 
 def site_url(lang: str) -> str:
-    """UI 言語に応じた公式サイトの URL (ja → 日本語版、それ以外 → 英語版)。"""
-    return SITE_URL if lang == "ja" else SITE_URL_EN
+    """UI 言語に応じた公式サイトの URL (ja → 日本語版、en / ko / zh_CN → その言語版、それ以外 → 英語版)。"""
+    return SITE_URL + SITE_LANG_DIRS.get(lang, "en/")
 
 
 def site_label(lang: str) -> str:

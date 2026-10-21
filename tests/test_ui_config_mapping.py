@@ -1286,6 +1286,40 @@ def test_line_marker_size_widget_maps_to_config(sample_path):
     assert not [w for w in at.slider if w.key == f"line_msize_{lid}"]
 
 
+def test_fill_between_edge_widgets_map_to_config(sample_path):
+    """1次元プロットの line fill: 「枠線」ラジオの既定は「既定」(style.edge_linewidth None、
+    旧設定の見た目)。「表示」で色と太さの widget が出て値が入り、「なし」で 0.0。"""
+    at = _load_app(sample_path)
+    at.selectbox(key="plot_mode_0").set_value("line")
+    at.run()
+    assert not at.exception
+    at.selectbox(key="addkind_line0_ja").set_value("fill_between")
+    at.run()
+    _button(at, "add_line0").set_value(True)
+    at.run()
+    assert not at.exception
+    lid = "line0_1"
+    assert at.radio(key=f"fb_edge_{lid}").value == "auto"
+    assert not [w for w in at.slider if w.key == f"fb_edge_lw_{lid}"]
+    style = at.session_state["panel_cfg_0"]["layers"][1]["style"]
+    assert style["edge_linewidth"] is None
+    at.radio(key=f"fb_edge_{lid}").set_value("on")
+    at.run()
+    assert not at.exception
+    assert at.slider(key=f"fb_edge_lw_{lid}").value == 1.0
+    at.slider(key=f"fb_edge_lw_{lid}").set_value(2.0)
+    at.run()
+    assert not at.exception
+    style = at.session_state["panel_cfg_0"]["layers"][1]["style"]
+    assert (style["edge_linewidth"], style["edge_color"]) == (2.0, "#000000")
+    at.radio(key=f"fb_edge_{lid}").set_value("off")
+    at.run()
+    assert not at.exception
+    style = at.session_state["panel_cfg_0"]["layers"][1]["style"]
+    assert style["edge_linewidth"] == 0.0
+    assert not [w for w in at.slider if w.key == f"fb_edge_lw_{lid}"]
+
+
 def test_hist_bin_width_caption_follows_bins_and_range(tmp_path):
     """1次元プロット(集計) のヒストグラム: 「ビン数」の横に出るビンの幅が、ビン数と
     「値の範囲を指定」の最小値・最大値 (無指定ならデータの min/max) に連動する。

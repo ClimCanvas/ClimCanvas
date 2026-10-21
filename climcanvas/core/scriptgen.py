@@ -26,8 +26,9 @@ import xarray as xr
 
 from .. import __version__
 from . import external_cmaps
-from .dataset import (CALENDAR_CONVERTED_ATTR, COORD_FILES_ATTR, detect_coord_roles,
-                      horizontal_dims, is_curvilinear)
+from .dataset import (CALENDAR_CONVERTED_ATTR, COORD_FILES_ATTR, MFDATASET_KWARGS,
+                      MULTI_FILE_ATTR, PATH_SPEC_GLOB, classify_path_spec,
+                      detect_coord_roles, horizontal_dims, is_curvilinear)
 from .render import (
     animation_gif_tight,
     natural_earth_scale,
@@ -41,6 +42,7 @@ from .render import (
     bundle_stat_specs,
     bundle_stat_expr,
     bundle_band_kwargs,
+    fill_between_kwargs,
     bundle_summary_draw,
     bundle_lines_visible,
     scatter_marker_kwargs,
@@ -192,6 +194,10 @@ def _assemble_script(gen: "_ScriptBuilder", figure_config: dict,
         imports.append("from cartopy.mpl.geoaxes import InterProjectionTransform")
     imports.extend(imports_last)
     imports.extend(ext_imports)
+    if any(MULTI_FILE_ATTR in ds.attrs for ds in datasets.values()):
+        # 複数ファイルの結合 (xr.open_mfdataset) は dask が要る。単一ファイルのスクリプトは
+        # 従来どおり dask 無しで動く (docs/multifile_glob_plan.md「dask の位置づけ」)
+        imports.append(_DASK_NOTE)
 
     open_lines = _open_dataset_lines(dataset_paths, dataset_renames, datasets)
     cmap_lines = _custom_cmap_registration_lines(custom_cmaps)
@@ -353,6 +359,51 @@ def _emit_shared_colorbar(gen: "_ScriptBuilder", shared_cbar: dict) -> None:
             f"scbar.ax.tick_params(pad={float(shared_cbar['tick_pad'])!r})")
 
 
+_DASK_NOTE = "# xr.open_mfdataset (multiple files combined) needs dask: pip install dask"
+
+
+def _open_mfdataset_lines(dsid: str, path: str, marker: dict) -> list[str]:
+    """複数ファイルを結合して開く行 (dataset.open_dataset_multi と1対1対応)。
+
+    marker は MULTI_FILE_ATTR の中身 `{"spec": 指定文字列, "paths": [絶対パス, ...]}`。
+    path は呼び出し側が「netCDF パスの形式」(absolute / relative) を適用した指定文字列。
+    - ワイルドカード指定 (spec が glob): パターンをそのまま書き、生成時に一致した件数と
+      先頭・末尾のファイル名をコメントで添える (実行時に再び展開される旨も)。
+      ディレクトリにファイルが増えると結果が変わるので、コメントで気づけるようにする
+    - 一覧テキスト指定 (spec が list) または spec 不明: 展開済みの全ファイルを明示リスト
+      `_files_{dsid} = [...]` に 1 行 1 パスで書く (ファイルが増えても同じ図になる)。
+      path が相対なら各パスも相対に揃える (座標ファイルと同じ扱い)
+    引数は MFDATASET_KWARGS をそのまま書く (docs/multifile_glob_plan.md 案 3)。
+    """
+    spec = marker.get("spec")
+    paths = list(marker.get("paths") or [])
+    kw = [f"{k}={v!r}" for k, v in MFDATASET_KWARGS.items()]
+    head = f"{dsid} = xr.open_mfdataset("
+    pad = " " * len(head)
+    # 引数は 2 行に分けて書く (1 行が長くなりすぎないように)
+    kw_lines = [pad + ", ".join(kw[:3]) + ",", pad + ", ".join(kw[3:]) + ")"]
+    lines: list[str] = []
+    if spec is not None and classify_path_spec(spec) == PATH_SPEC_GLOB:
+        n = len(paths)
+        first = os.path.basename(paths[0]) if paths else ""
+        last = os.path.basename(paths[-1]) if paths else ""
+        span = f"{first} ... {last}" if n > 1 else first
+        lines.append(f"# {n} file{'s' if n != 1 else ''} matched the pattern below when "
+                     f"this script was generated ({span}).")
+        lines.append("# The pattern is expanded again at run time.")
+        lines.append(f"{head}{path!r},")
+        lines.extend(kw_lines)
+        return lines
+    relative = not os.path.isabs(str(path))
+    files = [os.path.relpath(p) if relative else p for p in paths]
+    lines.append(f"_files_{dsid} = [")
+    lines.extend(f"    {f!r}," for f in files)
+    lines.append("]")
+    lines.append(f"{head}_files_{dsid},")
+    lines.extend(kw_lines)
+    return lines
+
+
 def _open_dataset_lines(dataset_paths: dict[str, str],
                          dataset_renames: dict[str, dict[str, str]] | None,
                          datasets: dict | None = None) -> list[str]:
@@ -369,12 +420,18 @@ def _open_dataset_lines(dataset_paths: dict[str, str],
     open 行と assign_coords 行を rename より前に出す (dataset.attach_coord_files と
     1対1対応。値は位置ベースで付ける)。座標ファイルのパスは本体のパスが相対なら相対に
     揃える (アプリの「netCDF パスの形式」)。
+    複数ファイルを結合した dataset (attrs の MULTI_FILE_ATTR) には open_dataset の代わりに
+    _open_mfdataset_lines の行を出す (dataset.open_dataset_multi と1対1対応)。
     """
     renames = dataset_renames or {}
     lines = []
     for dsid, path in dataset_paths.items():
-        lines.append(f"{dsid} = xr.open_dataset({path!r}, decode_timedelta=False)")
         ds = (datasets or {}).get(dsid)
+        multi_marker = ds.attrs.get(MULTI_FILE_ATTR) if ds is not None else None
+        if multi_marker:
+            lines.extend(_open_mfdataset_lines(dsid, path, json.loads(multi_marker)))
+        else:
+            lines.append(f"{dsid} = xr.open_dataset({path!r}, decode_timedelta=False)")
         marker = ds.attrs.get(CALENDAR_CONVERTED_ATTR) if ds is not None else None
         if marker:
             parts = str(marker).split(":")
@@ -3638,7 +3695,6 @@ class _ScriptBuilder:
         var_upper = layer.get("variable_upper")
         color_above = style.get("color", "#1f77b4")
         color_below = style.get("color_below")
-        alpha = float(style.get("alpha", 0.3))
         label = style.get("label")
         x_expr = f"{da_low}[{x_dim!r}].values"
         y_low_expr = f"{da_low}.values"
@@ -3651,10 +3707,10 @@ class _ScriptBuilder:
             vt_high = _value_transform_line(da_high, style)
             if vt_high:
                 self.body.append(vt_high)
-            kw = {"color": color_above, "alpha": alpha}
+            kw = fill_between_kwargs(style, color_above)
             if label:
                 kw["label"] = label
-            kw_str = ", ".join(f"{k}={v!r}" for k, v in kw.items())
+            kw_str = _fmt_kwargs_inline(kw)
             self.body.append(
                 f"{target}.fill_between({x_expr}, {y_low_expr}, "
                 f"{da_high}.values, {kw_str})")
@@ -3663,22 +3719,22 @@ class _ScriptBuilder:
         # baseline モード
         baseline = float(layer.get("baseline", 0.0))
         if not color_below or color_below == color_above:
-            kw = {"color": color_above, "alpha": alpha}
+            kw = fill_between_kwargs(style, color_above)
             if label:
                 kw["label"] = label
-            kw_str = ", ".join(f"{k}={v!r}" for k, v in kw.items())
+            kw_str = _fmt_kwargs_inline(kw)
             self.body.append(
                 f"{target}.fill_between({x_expr}, {y_low_expr}, "
                 f"{baseline!r}, {kw_str})")
             self.body.append("")
             return
         # 上下別色: where + interpolate=True (render._draw_fill_between_layer と同順)
-        kw_above = {"color": color_above, "alpha": alpha, "interpolate": True}
-        kw_below = {"color": color_below, "alpha": alpha, "interpolate": True}
+        kw_above = {**fill_between_kwargs(style, color_above), "interpolate": True}
+        kw_below = {**fill_between_kwargs(style, color_below), "interpolate": True}
         if label:
             kw_above["label"] = label
-        kw_above_str = ", ".join(f"{k}={v!r}" for k, v in kw_above.items())
-        kw_below_str = ", ".join(f"{k}={v!r}" for k, v in kw_below.items())
+        kw_above_str = _fmt_kwargs_inline(kw_above)
+        kw_below_str = _fmt_kwargs_inline(kw_below)
         self.body.append(
             f"{target}.fill_between({x_expr}, {y_low_expr}, {baseline!r}, "
             f"where=({y_low_expr} > {baseline!r}), {kw_above_str})")

@@ -2,6 +2,9 @@
 # Copyright (C) 2026 Masato Mori
 # This file is part of ClimCanvas, licensed under the GNU Affero General Public
 # License, version 3 only; see LICENSE and LICENSE.exception.
+import pytest
+import xarray as xr
+
 from climcanvas.core import dataset as mc_dataset
 
 
@@ -272,3 +275,131 @@ def test_detect_grid_projection(curvilinear_sample_path, sample_path, tmp_path):
     ps = _grid_from(ccrs.NorthPolarStereo(central_longitude=0.0), y_off=-3000e3)
     gp = mc_dataset.detect_grid_projection(ps)
     assert gp["name"] == "NorthPolarStereo" and abs(gp["central_longitude"]) < 0.05
+
+
+# --- 複数ファイルの時間結合 (docs/multifile_glob_plan.md Step 1) ---
+
+def test_classify_path_spec():
+    c = mc_dataset.classify_path_spec
+    assert c("/data/hgt/20200101.nc") == mc_dataset.PATH_SPEC_SINGLE
+    assert c("/data/hgt/*.nc") == mc_dataset.PATH_SPEC_GLOB
+    assert c("/data/hgt/2020010?.nc") == mc_dataset.PATH_SPEC_GLOB
+    assert c("/data/hgt/202001[0-1]*.nc") == mc_dataset.PATH_SPEC_GLOB
+    assert c("/data/files.lst") == mc_dataset.PATH_SPEC_LIST
+    assert c("/data/files.txt") == mc_dataset.PATH_SPEC_SINGLE  # .txt は一覧扱いしない
+    assert c("/data/FILES.LST") == mc_dataset.PATH_SPEC_LIST
+    # 一覧テキストの拡張子でもワイルドカードがあれば glob (パターン優先)
+    assert c("/data/*.lst") == mc_dataset.PATH_SPEC_GLOB
+
+
+def test_resolve_path_spec_glob_and_single(multifile_sample_dir, tmp_path):
+    import os
+    paths = mc_dataset.resolve_path_spec(os.path.join(multifile_sample_dir, "sample_atmos_*.nc"))
+    assert len(paths) == 8
+    assert paths == sorted(paths)
+    assert all(os.path.isabs(p) and os.path.isfile(p) for p in paths)
+    assert os.path.basename(paths[0]) == "sample_atmos_2024010100.nc"
+    # 絞ったパターンは 1 件でもリストで返る
+    one = mc_dataset.resolve_path_spec(os.path.join(multifile_sample_dir, "*_2024010106.nc"))
+    assert len(one) == 1 and one[0].endswith("sample_atmos_2024010106.nc")
+    # 単一ファイル
+    assert mc_dataset.resolve_path_spec(paths[0]) == [paths[0]]
+    # ~ の展開 (HOME を一時ディレクトリに向ける)
+    old_home = os.environ.get("HOME")
+    os.environ["HOME"] = multifile_sample_dir
+    try:
+        assert mc_dataset.resolve_path_spec("~/sample_atmos_*.nc") == paths
+    finally:
+        os.environ["HOME"] = old_home
+    # 0 件・存在しないファイルは英語の ValueError
+    with pytest.raises(ValueError, match="No file matches pattern"):
+        mc_dataset.resolve_path_spec(os.path.join(multifile_sample_dir, "nothing_*.nc"))
+    with pytest.raises(ValueError, match="File not found"):
+        mc_dataset.resolve_path_spec(str(tmp_path / "missing.nc"))
+
+
+def test_resolve_path_spec_list(multifile_sample_dir, tmp_path):
+    """一覧テキスト: 書かれた順・重複除去・コメントと空行・行内ワイルドカード・
+    相対パスと不在ファイルは行番号つきで失敗。"""
+    import os
+    files = sorted(os.listdir(multifile_sample_dir))
+    p = lambda name: os.path.join(multifile_sample_dir, name)  # noqa: E731
+    lst = tmp_path / "files.lst"
+    lst.write_text(
+        "# 先頭のコメント行\n"
+        f"{p(files[1])}\n"
+        "\n"
+        f"{p(files[0])}   # 行末のコメント\n"
+        f"{p(files[1])}\n"                               # 重複 → 1 回だけ
+        f"{os.path.join(multifile_sample_dir, '*_202401011?.nc')}\n",  # 12h, 18h の 2 件
+        encoding="utf-8")
+    got = mc_dataset.resolve_path_spec(str(lst))
+    assert files[:2] == ["sample_atmos_2024010100.nc", "sample_atmos_2024010106.nc"]
+    assert got == [p(files[1]), p(files[0]), p("sample_atmos_2024010112.nc"),
+                   p("sample_atmos_2024010118.nc")]
+    # 相対パスの行は行番号つきで拒否 (どこ基準かの曖昧さを残さない)
+    bad = tmp_path / "rel.lst"
+    bad.write_text(f"{p(files[0])}\nsample_atmos_2024010106.nc\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"rel\.lst:2: relative path is not allowed"):
+        mc_dataset.resolve_path_spec(str(bad))
+    # 存在しないファイル・一致 0 件のパターン・空の一覧
+    missing = tmp_path / "missing.lst"
+    missing.write_text(f"{p('nothing.nc')}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"missing\.lst:1: file not found"):
+        mc_dataset.resolve_path_spec(str(missing))
+    nomatch = tmp_path / "nomatch.lst"
+    nomatch.write_text(f"{p('nothing_*.nc')}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"nomatch\.lst:1: no file matches pattern"):
+        mc_dataset.resolve_path_spec(str(nomatch))
+    empty = tmp_path / "empty.lst"
+    empty.write_text("# only a comment\n\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="no file entries"):
+        mc_dataset.resolve_path_spec(str(empty))
+    with pytest.raises(ValueError, match="List file not found"):
+        mc_dataset.resolve_path_spec(str(tmp_path / "absent.lst"))
+
+
+def test_open_dataset_multi_matches_single_file(sample_path, multifile_sample_dir):
+    """8 ファイルを結合した結果が元の 1 ファイルと値・座標・役割で一致し、
+    遅延 (dask) 配列のまま開かれ、MULTI_FILE_ATTR に指定と展開結果が残る。"""
+    import json
+    import os
+    spec = os.path.join(multifile_sample_dir, "sample_atmos_*.nc")
+    paths = mc_dataset.resolve_path_spec(spec)
+    multi = mc_dataset.open_dataset_multi(paths, spec=spec)
+    single = mc_dataset.open_dataset(sample_path)
+    assert multi.sizes == single.sizes
+    assert list(multi["time"].values) == list(single["time"].values)
+    assert multi["t"].chunks is not None  # 遅延読み込み (1 ファイル = 1 塊)
+    assert len(multi["t"].chunks[0]) == 8
+    for name in single.data_vars:
+        xr.testing.assert_equal(multi[name].load(), single[name])
+    assert mc_dataset.detect_coord_roles(multi) == mc_dataset.detect_coord_roles(single)
+    marker = json.loads(multi.attrs[mc_dataset.MULTI_FILE_ATTR])
+    assert marker == {"spec": spec, "paths": paths}
+    # 1 件でも open_mfdataset で開ける (指定どおりにスクリプトへ写すため)
+    one = mc_dataset.open_dataset_multi(paths[:1])
+    assert one.sizes["time"] == 1
+    assert json.loads(one.attrs[mc_dataset.MULTI_FILE_ATTR])["spec"] is None
+    with pytest.raises(ValueError, match="No files to open"):
+        mc_dataset.open_dataset_multi([])
+
+
+def test_open_dataset_multi_rejects_mismatch(multifile_sample_dir, tmp_path):
+    """格子の違うファイル (join="exact") と時刻の重複は黙って通さず ValueError。"""
+    import os
+    import shutil
+    files = sorted(os.listdir(multifile_sample_dir))
+    a = os.path.join(multifile_sample_dir, files[0])
+    b = os.path.join(multifile_sample_dir, files[1])
+    # 緯度を 1 つ削った 2 番目のファイル → 格子不一致
+    cropped = tmp_path / "cropped.nc"
+    with xr.open_dataset(b) as ds:
+        ds.isel(lat=slice(0, -1)).to_netcdf(cropped)
+    with pytest.raises(ValueError, match="Cannot combine 2 files"):
+        mc_dataset.open_dataset_multi([a, str(cropped)])
+    # 同じ時刻のファイルを 2 つ → 重複
+    dup = tmp_path / "dup.nc"
+    shutil.copy(a, dup)
+    with pytest.raises(ValueError, match="Cannot combine 2 files"):
+        mc_dataset.open_dataset_multi([a, str(dup)])

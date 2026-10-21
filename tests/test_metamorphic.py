@@ -329,3 +329,26 @@ def test_section_path_y_storage_order_equivalence(curvilinear_sample_path, tmp_p
     cfg = _great_circle_section_cfg("lev", (118.0, 27.0), (160.0, 44.0))
     _assert_identical(cfg, curvilinear_sample_path, cfg, p_flip, tmp_path,
                       "大円断面: curvilinear y 反転", exact=False)
+
+
+# --- 複数ファイルの時間結合 (docs/multifile_glob_plan.md Step 2) ---
+
+@pytest.mark.parametrize("builder_name", ["_simple_config", "_line_1d_time_config",
+                                          "_line_1d_time_area_avg_config"])
+def test_multifile_glob_equivalence(builder_name, sample_path, multifile_sample_dir, tmp_path):
+    """同値変換: 1 ファイルと、それを時刻ごとに 8 ファイルへ分割してワイルドカードで結合した
+    ものは同じ図になる (1 時刻の地図、1 地点の時系列、領域平均の時系列)。
+
+    結合側は dask 配列 (1 ファイル = 1 塊) だが、ここで試す処理は時間方向の集計を含まない
+    (領域平均は 1 塊の中の lat/lon 方向) ので塊ごとの合計順序の違いは出ず、ピクセル完全一致を
+    要求できる。時間方向の集計 (時間平均など) を加えるときは最終ビットの差を許容する判定にする
+    (計画書「dask の位置づけ」の含意)。
+    """
+    import os
+
+    import test_consistency as tc
+
+    builder = getattr(tc, builder_name)
+    spec = os.path.join(multifile_sample_dir, "sample_atmos_*.nc")
+    _assert_identical(builder(), sample_path, builder(), spec, tmp_path,
+                      f"単一ファイル vs 複数ファイル結合 ({builder_name})")

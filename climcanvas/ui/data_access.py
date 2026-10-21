@@ -19,16 +19,43 @@ def load_dataset(path: str, mtime: float):
     return mc_dataset.open_dataset(path)
 
 
+@st.cache_resource(show_spinner="netCDFファイルを読み込んでいます...")
+def load_dataset_multi(paths: tuple[str, ...], mtimes: tuple[float, ...], spec: str):
+    """複数ファイルを座標で結合して開く (dataset.open_dataset_multi、遅延読み込み)。
+
+    paths / mtimes がキャッシュキー (ファイルが増減・更新されれば読み直す)。spec は
+    ユーザーが欄に書いた指定文字列 (ワイルドカード / 一覧テキスト) で、MULTI_FILE_ATTR に
+    残して scriptgen が参照する。計画 = docs/multifile_glob_plan.md
+    """
+    return mc_dataset.open_dataset_multi(list(paths), spec=spec)
+
+
+def resolve_entry(spec: str) -> tuple[tuple[str, ...], tuple[float, ...]]:
+    """datasets エントリの path (1 ファイル / ワイルドカード / 一覧テキスト) を実在ファイルの
+    タプルと mtime のタプルに展開する (キャッシュキー用)。失敗は ValueError (英語)。"""
+    paths = tuple(mc_dataset.resolve_path_spec(spec))
+    return paths, tuple(os.path.getmtime(p) for p in paths)
+
+
+def load_dataset_spec(spec: str, paths: tuple[str, ...], mtimes: tuple[float, ...]):
+    """指定文字列の種別に応じて load_dataset (1 ファイル、従来どおり) か
+    load_dataset_multi (結合) を呼ぶ。paths / mtimes は resolve_entry の結果。"""
+    if mc_dataset.classify_path_spec(spec) == mc_dataset.PATH_SPEC_SINGLE:
+        return load_dataset(paths[0], mtimes[0])
+    return load_dataset_multi(paths, mtimes, spec)
+
+
 @st.cache_resource(show_spinner="座標ファイルを結び付けています...")
-def load_dataset_with_coords(path: str, mtime: float,
+def load_dataset_with_coords(spec: str, paths: tuple[str, ...], mtimes: tuple[float, ...],
                              coord_paths: tuple[str, ...],
                              coord_mtimes: tuple[float, ...]):
     """本体を読み、座標ファイル (経緯度が別ファイル) の lon/lat を座標として結び付ける。
 
-    mtime 群はキャッシュキー (ファイル更新で読み直す)。結び付けの本体は
-    dataset.attach_coord_files (scriptgen が同じ行を出す)。
+    mtime 群はキャッシュキー (ファイル更新で読み直す)。本体は 1 ファイルでも複数ファイルの
+    結合でもよい (load_dataset_spec)。結び付けの本体は dataset.attach_coord_files
+    (scriptgen が同じ行を出す)。
     """
-    ds = load_dataset(path, mtime)
+    ds = load_dataset_spec(spec, paths, mtimes)
     coord_files = [(p, mc_dataset.open_coord_file(p)) for p in coord_paths]
     return mc_dataset.attach_coord_files(ds, coord_files)
 
@@ -45,7 +72,8 @@ picked = filedialog.askopenfilename(
     parent=root,
     title=sys.argv[1],
     initialdir=sys.argv[2],
-    filetypes=[('netCDF', '*.nc *.nc4 *.netcdf *.cdf'), ('All files', '*.*')],
+    filetypes=[('netCDF', '*.nc *.nc4 *.netcdf *.cdf'),
+               ('File list (.lst)', '*.lst'), ('All files', '*.*')],
 )
 root.destroy()
 sys.stdout.write(picked or '')
@@ -53,15 +81,15 @@ sys.stdout.write(picked or '')
 
 
 @st.cache_resource(show_spinner=False)
-def detect_grid_projection_cached(path: str, mtime: float,
+def detect_grid_projection_cached(spec: str, paths: tuple[str, ...], mtimes: tuple[float, ...],
                                   coord_paths: tuple[str, ...],
                                   coord_mtimes: tuple[float, ...]):
     """2 次元座標格子の投影法の推定 (dataset.detect_grid_projection) をファイル単位で
     キャッシュする。座標ファイル付きなら結び付けた dataset で判定する。"""
     if coord_paths:
-        ds = load_dataset_with_coords(path, mtime, coord_paths, coord_mtimes)
+        ds = load_dataset_with_coords(spec, paths, mtimes, coord_paths, coord_mtimes)
     else:
-        ds = load_dataset(path, mtime)
+        ds = load_dataset_spec(spec, paths, mtimes)
     return mc_dataset.detect_grid_projection(ds)
 
 

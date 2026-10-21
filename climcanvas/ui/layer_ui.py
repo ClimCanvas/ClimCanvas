@@ -42,6 +42,10 @@ _FILL_METHOD_LABELS = {"contourf": "contourf (滑らか)",
 _CMODE_LABELS = {"single": "単色", "cmap": "カラーマップ"}
 _CMODE_MAG_LABELS = {"single": "単色", "cmap": "カラーマップ (大きさ)"}
 _FB_MODE_LABELS = {"variable": "変数で指定", "constant": "定数 (ベースライン)"}
+# line fill の枠線: auto = matplotlib 既定 (塗り色の細い縁、従来の見た目) / off = なし /
+# on = 色・太さを指定 (style.edge_linewidth が None / 0 / 正に対応)
+_FB_EDGE_LABELS = {"auto": "既定 (塗り色の細い縁)", "off": "なし",
+                   "on": "表示 (色・太さを指定)"}
 _ERR_SRC_LABELS = {"variable": "変数で指定", "constant": "定数"}
 _BAR_ORIENT_LABELS = {"vertical": "縦棒 (ax.bar)", "horizontal": "横棒 (ax.barh)"}
 _DENSITY_LABELS = {"count": "度数", "density": "確率密度 (density)"}
@@ -1278,6 +1282,22 @@ def fill_between_layer_ui(datasets, variables_by_ds, keep_dims, lid, roles=None,
         s["color_below"] = None
     s["alpha"] = float(st.slider(t("透明度 (alpha)"), 0.0, 1.0, 0.3, 0.05,
                                   key=f"fb_alpha_{lid}"))
+    # 枠線 (塗り領域の輪郭)。既定は matplotlib の挙動のまま (旧設定の見た目を変えない)
+    edge_mode = st.radio(
+        t("枠線"), list(_FB_EDGE_LABELS), format_func=tr_labels(_FB_EDGE_LABELS).get,
+        horizontal=True, key=f"fb_edge_{lid}",
+        help=t("「既定」は matplotlib の既定で、塗り色と同じ色の細い縁が付き透明度も掛かる。"
+               "「表示」は指定した色・太さの不透明な枠線を描く (透明度は塗りだけに掛かる)"))
+    if edge_mode == "on":
+        s["edge_color"] = color_selector(t("枠線の色"), "#000000",
+                                          key=f"fb_edge_color_{lid}",
+                                          meta_store=s, meta_key="edge_color")
+        s["edge_linewidth"] = float(st.slider(
+            t("枠線の太さ"), 0.1, 3.0, 1.0, 0.1, key=f"fb_edge_lw_{lid}"))
+    elif edge_mode == "off":
+        s["edge_linewidth"] = 0.0
+    else:
+        s["edge_linewidth"] = None
     s["secondary_y"] = st.checkbox(
         t("第2軸 (右の縦軸) に描く"), value=False, key=f"fb_y2_{lid}",
         help=t("単位の違う物理量を重ねるとき用。第2軸のラベル・範囲・目盛などは「第2軸 (右)」で指定する"))

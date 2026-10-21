@@ -30,6 +30,7 @@ import pytest
 
 from scripts.make_sample_data import create_sample_dataset, create_terrain_dataset
 from scripts.make_sample_track_data import create_track_dataset
+from scripts.make_sample_multifile_data import split_by_time
 from scripts.make_sample_curvilinear_data import (create_curvilinear_dataset,
                                                   create_curvilinear_terrain)
 
@@ -39,6 +40,15 @@ def sample_path(tmp_path_factory) -> str:
     path = tmp_path_factory.mktemp("data") / "sample_atmos.nc"
     create_sample_dataset(str(path))
     return str(path)
+
+
+@pytest.fixture(scope="session")
+def multifile_sample_dir(sample_path, tmp_path_factory) -> str:
+    """sample_atmos.nc を時刻ごとに 8 ファイルへ分割したディレクトリ
+    (sample_atmos_{YYYYMMDDhh}.nc。複数ファイルの時間結合のテスト用)。"""
+    out = tmp_path_factory.mktemp("multi")
+    split_by_time(sample_path, str(out))
+    return str(out)
 
 
 @pytest.fixture(scope="session")

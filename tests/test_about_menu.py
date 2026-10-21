@@ -49,10 +49,12 @@ def test_new_issue_url_prefills_version():
 
 @pytest.mark.parametrize("lang", sorted(i18n.LANG_LABELS))
 def test_site_url_follows_ui_language(lang):
-    """サイトは ja → 日本語版 (CITATION.cff と同じトップ)、それ以外 → 英語版 /en/。"""
+    """サイトは ja → 日本語版 (CITATION.cff と同じトップ)、en / ko / zh_CN → その言語版 (/en/ /ko/ /zh/)、
+    それ以外の未知の言語 → 英語版。"""
     url = about.site_url(lang)
-    assert url == (about.SITE_URL if lang == "ja" else about.SITE_URL_EN)
+    assert url == about.SITE_URL + {"ja": "", "en": "en/", "ko": "ko/", "zh_CN": "zh/"}[lang]
     assert about.SITE_URL_EN.startswith(about.SITE_URL)
+    assert about.site_url("xx") == about.SITE_URL_EN
     # リンク文字列は scheme と末尾の / を除いた URL
     assert "https://" + about.site_label(lang) + "/" == url
 
@@ -75,9 +77,11 @@ def test_about_markdown(lang, monkeypatch):
     assert about.new_issue_url(ver, "bug.yml") in md
     assert about.new_issue_url(ver, "feature.yml") in md
     assert "AGPL-3.0-only" in md and "/blob/main/LICENSE" in md
-    # サイトは UI 言語に応じて日本語版 / 英語版 (リンク文字列も同じ URL を示す)
+    # サイトは UI 言語に応じた言語版 (リンク文字列も同じ URL を示す)。他の言語版の URL は入らない
     assert f"[{about.site_label(lang)}]({about.site_url(lang)})" in md
-    assert (about.SITE_URL_EN in md) == (lang != "ja")
+    for other, d in about.SITE_LANG_DIRS.items():
+        if other != lang and d:
+            assert about.SITE_URL + d not in md, (lang, other)
     # Markdown のリンクが 5 本とも崩れていない
     assert len(re.findall(r"\[[^\]]+\]\(https://[^)\s]+\)", md)) == 5
     if lang != "ja":

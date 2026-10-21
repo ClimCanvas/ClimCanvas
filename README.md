@@ -10,6 +10,8 @@ Website: <https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/> — with the
 [user manual](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/manual/index.html) and the [FAQ](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/faq.html)
 (also available [in Japanese](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/)).
 
+![Demo of the ClimCanvas GUI: loading a netCDF file, switching plot modes and projections, adding a contour layer, stepping through time and showing the generated script](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/assets/hero-realtime-en.gif)
+
 ## Features
 
 - Reads netCDF files through xarray, with automatic detection of latitude,
@@ -20,11 +22,14 @@ Website: <https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/> — with the
   scatter and bubble plots, 2-D aggregates (hist2d, hexbin) and heatmaps
 - Layers: filled contours, contour lines, hatching, vectors, streamlines, point
   scatter and best-track storm tracks, stacked freely on one panel
+- Files split by time (one file per day, month, ...) opened as one dataset
+  combined along time, by a wildcard pattern such as `hgt/*.nc` or a list file
 - Multi-panel figures with mosaic layout, shared colorbar and panel labels
 - Animations along any dimension and a rotating-globe animation (GIF / MP4)
 - Reproduction scripts: every figure can be exported as a self-contained `.py`
-  that depends only on xarray, matplotlib and cartopy. The test suite checks
-  that the app and the script produce pixel-identical images
+  that depends only on xarray, matplotlib and cartopy (plus dask when several
+  files are combined into one dataset). The test suite checks that the app and
+  the script produce pixel-identical images
 - Presets and sessions (JSON), custom colormaps, and a UI in Japanese,
   English, Chinese (simplified) and Korean
 
@@ -41,7 +46,7 @@ commit per release, so the tip of `main` is always the newest version (the
 necessarily the newest). To use a specific version, clone its tag:
 
 ```bash
-git clone --branch v1.02.4 https://github.com/ClimCanvas/ClimCanvas.git
+git clone --branch v1.03 https://github.com/ClimCanvas/ClimCanvas.git
 ```
 
 To update an existing clone, run `git pull` in it; your settings and sessions

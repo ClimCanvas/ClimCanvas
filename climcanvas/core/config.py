@@ -954,6 +954,11 @@ def default_fill_between_layer(dataset_id: str, variable: str,
             # 変数モード (variable_upper 指定) では使われない
             "color_below": None,
             "alpha": 0.3,
+            # 枠線 (塗り領域の輪郭)。edge_linewidth: None = matplotlib 既定 (塗り色と同色・
+            # 太さ 1 の細い縁、alpha も掛かる — 従来の見た目)、0 = なし、正 = edge_color の
+            # 不透明な枠線 (透明度は塗りだけに掛かる)。解決は render.fill_between_kwargs
+            "edge_linewidth": None,
+            "edge_color": "#000000",
             "label": None,
             "value_scale": 1.0,
             "value_offset": 0.0,

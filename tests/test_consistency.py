@@ -949,6 +949,36 @@ def _line_1d_fill_between_split_baseline_config():
     return cfg
 
 
+def _line_1d_fill_between_edge_config():
+    """1次元プロット: line fill の枠線 3 態 (表示 = 不透明な黒縁 / なし / 既定) を 1 枚に。
+
+    2 変数の帯は枠線 on (黒・1.5)、ベースライン単色は枠線 off (linewidth=0)、
+    上下別色の帯は枠線 on (灰・0.8。where 分割の各ポリゴンに縁が付く)。
+    """
+    panel = mc_config.default_line_panel()
+    panel["x_dim"] = "lon"
+    panel["selection"] = {"time": "2024-01-01T00:00:00", "level": 500.0, "lat": 35.0}
+    panel["title"] = "fill_between edge on / off / default"
+    panel["axis"]["x_label"] = "longitude"
+    panel["axis"]["y_label"] = "value"
+    fb_on = mc_config.default_fill_between_layer("ds0", "u", variable_upper="v")
+    fb_on["style"].update({"color": "#888888", "alpha": 0.4, "label": "u..v band",
+                           "edge_linewidth": 1.5, "edge_color": "#000000"})
+    fb_off = mc_config.default_fill_between_layer("ds0", "t", variable_upper=None,
+                                                    baseline=250.0)
+    fb_off["style"].update({"color": "tab:green", "alpha": 0.3, "label": "t - 250",
+                            "edge_linewidth": 0.0})
+    fb_split = mc_config.default_fill_between_layer("ds0", "u", variable_upper=None,
+                                                      baseline=0.0)
+    fb_split["style"].update({"color": "#d62728", "color_below": "#1f77b4",
+                              "alpha": 0.4, "label": "u +/-",
+                              "edge_linewidth": 0.8, "edge_color": "#444444"})
+    panel["layers"] = [fb_on, fb_off, fb_split]
+    cfg = mc_config.default_figure_config()
+    cfg["panels"] = [panel]
+    return cfg
+
+
 def _line_1d_fill_between_per_var_levels_config():
     """1次元プロット: 2変数 (両方 t) を異なる level に固定して帯を描く (層厚図イメージ)。"""
     panel = mc_config.default_line_panel()
@@ -1836,7 +1866,7 @@ from climcanvas.core import render as mc_render
 
 with open(sys.argv[1], encoding="utf-8") as f:
     cfg = json.load(f)
-datasets = {"ds0": mc_dataset.open_dataset(sys.argv[2])}
+datasets = {"ds0": mc_dataset.open_path_spec(sys.argv[2])}
 if len(sys.argv) > 5 and sys.argv[5]:
     # 座標ファイル (";" 区切り) を結び付ける (アプリの load_dataset_with_coords と同じ手順)
     _cpaths = sys.argv[5].split(";")
@@ -1860,7 +1890,8 @@ def _assert_app_and_script_match(cfg, sample_path, tmp_path, coord_paths=()):
     (生成スクリプトには open + assign_coords 行が入る)。"""
     import json
 
-    datasets = {"ds0": mc_dataset.open_dataset(sample_path)}
+    # sample_path はワイルドカード・一覧テキストでもよい (複数ファイルの結合 → open_mfdataset 行)
+    datasets = {"ds0": mc_dataset.open_path_spec(sample_path)}
     if coord_paths:
         datasets["ds0"] = mc_dataset.attach_coord_files(
             datasets["ds0"],
@@ -3275,6 +3306,7 @@ def _maskout_var_config():
     _line_1d_fill_between_two_vars_config, _line_1d_fill_between_baseline_config,
     _line_1d_fill_between_per_var_levels_config,
     _line_1d_fill_between_split_baseline_config,
+    _line_1d_fill_between_edge_config,
     _line_1d_markers_only_config, _line_1d_hide_ticklabels_config,
     _line_1d_tick_interval_config, _line_1d_no_ticks_config,
     _line_1d_tick_positions_config, _line_1d_tick_custom_labels_config,
@@ -3331,6 +3363,7 @@ def _maskout_var_config():
         "line-1d-fb-two-vars", "line-1d-fb-baseline",
         "line-1d-fb-per-var-levels",
         "line-1d-fb-split-baseline",
+        "line-1d-fb-edge",
         "line-1d-markers-only", "line-1d-hide-ticklabels",
         "line-1d-tick-interval", "line-1d-no-ticks",
         "line-1d-tick-positions", "line-1d-tick-custom-labels",
@@ -3968,11 +4001,18 @@ def test_animation_render_and_script_produce_identical_gif(sample_path, tmp_path
     layer-fixed-time: レイヤー側の selection にコマと違う時刻を固定した設定。
     render がレイヤー側の時刻も差し替えないとそのパネルが止まり、scriptgen
     (レイヤー側の .sel も time_value に置換) と食い違う (2026-09-19 の実機報告)。"""
-    datasets = {"ds0": mc_dataset.open_dataset(sample_path)}
     cfg = _simple_config()
     time_values = ["2024-01-01T00:00:00", "2024-01-01T06:00:00", "2024-01-01T12:00:00"]
     if layer_fixed_time:
         cfg["panels"][0]["layers"][0]["selection"] = {"time": "2024-01-02T00:00:00"}
+    _assert_animation_gif_matches(cfg, sample_path, time_values, tmp_path)
+
+
+def _assert_animation_gif_matches(cfg, ds_spec, time_values, tmp_path):
+    """render.save_animation_gif と生成スクリプトの GIF がフレーム単位で一致することを検証する。
+    ds_spec は 1 ファイルのパスでも、ワイルドカード・一覧テキスト (複数ファイルの結合) でもよい。"""
+    datasets = {"ds0": mc_dataset.open_path_spec(ds_spec)}
+    sample_path = ds_spec
 
     # 1) 生成スクリプトでアニメーション GIF を作る (コールドプロセス)
     script_gif = tmp_path / "script.gif"
@@ -4019,7 +4059,7 @@ from climcanvas.core import render as mc_render
 from climcanvas.core import dataset as mc_dataset
 
 cfg = json.loads(open(sys.argv[1]).read())
-datasets = {"ds0": mc_dataset.open_dataset(sys.argv[2])}
+datasets = {"ds0": mc_dataset.open_path_spec(sys.argv[2])}
 time_values = json.loads(sys.argv[3])
 centers = json.loads(sys.argv[6]) if len(sys.argv) > 6 else None
 hold = int(sys.argv[7]) if len(sys.argv) > 7 else 1
@@ -4035,7 +4075,7 @@ from climcanvas.core import render as mc_render
 from climcanvas.core import dataset as mc_dataset
 
 cfg = json.loads(open(sys.argv[1]).read())
-datasets = {"ds0": mc_dataset.open_dataset(sys.argv[2])}
+datasets = {"ds0": mc_dataset.open_path_spec(sys.argv[2])}
 time_values = json.loads(sys.argv[3])
 centers = json.loads(sys.argv[6]) if len(sys.argv) > 6 else None
 mc_render.save_animation_mp4(cfg, datasets, time_values, sys.argv[4],
@@ -4481,3 +4521,101 @@ def test_lon_average_ok_when_range_inside_data(tmp_path):
     plt.close(fig)
     script = mc_scriptgen.generate_script(cfg, datasets, {"ds0": "x.nc"})
     assert ".sel(lon=slice(30.0, 200.0))" in script
+
+
+# --- 複数ファイルの時間結合 (docs/multifile_glob_plan.md Step 2) ---
+# データは conftest の multifile_sample_dir (sample_atmos.nc を時刻ごとに 8 ファイルへ分割)。
+# ワイルドカードで結合した dataset は dask 配列 (1 ファイル = 1 塊) で、生成スクリプトは
+# xr.open_mfdataset を使う。単一ファイルの図・スクリプトと同じ結果になることは
+# test_metamorphic.test_multifile_glob_equivalence が見る。
+
+def _multifile_spec(multifile_sample_dir: str) -> str:
+    return os.path.join(multifile_sample_dir, "sample_atmos_*.nc")
+
+
+@pytest.mark.parametrize("config_builder",
+                         [_simple_config, _line_1d_time_config, _line_1d_time_area_avg_config],
+                         ids=["multi-map", "multi-line-time", "multi-line-area-avg"])
+def test_multifile_glob_render_and_script_produce_identical_png(config_builder,
+                                                                 multifile_sample_dir, tmp_path):
+    """ワイルドカードで 8 ファイルを結合した dataset: render と生成スクリプト (open_mfdataset) の
+    画像が一致する (1 時刻の地図、1 地点の時系列、領域平均の時系列)。"""
+    _assert_app_and_script_match(config_builder(), _multifile_spec(multifile_sample_dir), tmp_path)
+
+
+def test_multifile_animation_render_and_script_produce_identical_gif(multifile_sample_dir,
+                                                                      tmp_path):
+    """8 ファイルを結合した dataset のアニメーション: コマごとに別ファイルを読む経路でも
+    render と生成スクリプトの GIF がフレーム単位で一致する。"""
+    time_values = ["2024-01-01T00:00:00", "2024-01-01T06:00:00", "2024-01-01T12:00:00"]
+    _assert_animation_gif_matches(_simple_config(), _multifile_spec(multifile_sample_dir),
+                                  time_values, tmp_path)
+
+
+def test_multifile_script_content(multifile_sample_dir, tmp_path):
+    """生成スクリプトの open 部 (案 3):
+    - ワイルドカード指定: パターンをそのまま + 生成時の件数と先頭・末尾のコメント + dask の注記。
+      相対パス形式でもワイルドカードが残る
+    - 一覧テキスト指定: 展開済みの明示リスト `_files_ds0` (件数コメントは出ない)
+    - 単一ファイル: 従来どおり open_dataset で、dask の注記も出ない
+    引数は dataset.MFDATASET_KWARGS と 1 対 1。"""
+    spec = _multifile_spec(multifile_sample_dir)
+    cfg = _simple_config()
+
+    def gen(ds, path):
+        return mc_scriptgen.generate_script(cfg, {"ds0": ds}, {"ds0": path},
+                                            figure_output="x.png", include_show=False)
+
+    ds = mc_dataset.open_path_spec(spec)
+    script = gen(ds, spec)
+    assert "needs dask" in script
+    assert "# 8 files matched the pattern below" in script
+    assert "(sample_atmos_2024010100.nc ... sample_atmos_2024010218.nc)" in script
+    assert f"ds0 = xr.open_mfdataset({spec!r}," in script
+    for k, v in mc_dataset.MFDATASET_KWARGS.items():
+        assert f"{k}={v!r}" in script
+    assert "xr.open_dataset(" not in script
+    assert "import dask" not in script
+    # 相対パス形式 (アプリの「netCDF パスの形式」= relative)
+    rel = os.path.relpath(spec)
+    assert "*" in rel
+    assert f"ds0 = xr.open_mfdataset({rel!r}," in gen(ds, rel)
+    # 一覧テキスト指定 → 明示リスト
+    paths = mc_dataset.resolve_path_spec(spec)[:3]
+    lst = tmp_path / "files.lst"
+    lst.write_text("\n".join(paths) + "\n", encoding="utf-8")
+    script_l = gen(mc_dataset.open_path_spec(str(lst)), str(lst))
+    assert "_files_ds0 = [" in script_l
+    assert all(f"    {p!r}," in script_l for p in paths)
+    assert "ds0 = xr.open_mfdataset(_files_ds0," in script_l
+    assert "matched the pattern" not in script_l
+    assert "needs dask" in script_l
+    # 相対パス形式なら明示リストの各パスも相対
+    script_lr = gen(mc_dataset.open_path_spec(str(lst)), os.path.relpath(str(lst)))
+    assert all(f"    {os.path.relpath(p)!r}," in script_lr for p in paths)
+    # 単一ファイルは従来どおり (cfg が選ぶ 06 時を含むファイル)
+    one = paths[1]
+    assert one.endswith("sample_atmos_2024010106.nc")
+    script_s = gen(mc_dataset.open_path_spec(one), one)
+    assert "open_mfdataset" not in script_s
+    assert "needs dask" not in script_s
+    assert f"ds0 = xr.open_dataset({one!r}, decode_timedelta=False)" in script_s
+
+
+def test_multifile_list_render_and_script_produce_identical_png(multifile_sample_dir, tmp_path):
+    """一覧テキスト (.lst、コメント行・重複・行内ワイルドカードを含む) で結合した dataset:
+    生成スクリプトは展開済みの明示リスト (_files_ds0) で開き、render と画像が一致する
+    (docs/multifile_glob_plan.md Step 4)。"""
+    files = sorted(os.listdir(multifile_sample_dir))
+    lst = tmp_path / "files.lst"
+    lst.write_text("# 2024-01-01 の 4 時刻\n"
+                   f"{os.path.join(multifile_sample_dir, files[0])}\n"
+                   f"{os.path.join(multifile_sample_dir, files[1])}   # 06 時\n"
+                   f"{os.path.join(multifile_sample_dir, files[1])}\n"
+                   f"{os.path.join(multifile_sample_dir, '*_202401011?.nc')}\n",
+                   encoding="utf-8")
+    assert len(mc_dataset.resolve_path_spec(str(lst))) == 4
+    _assert_app_and_script_match(_simple_config(), str(lst), tmp_path)
+    script = (tmp_path / "reproduce.py").read_text(encoding="utf-8")
+    assert "_files_ds0 = [" in script and script.count("sample_atmos_2024010") == 4
+    assert "matched the pattern" not in script

@@ -436,6 +436,21 @@ def _list_sessions(directory: str) -> list[str]:
         return []
 
 
+def normalize_session_name(name: str) -> str:
+    """「新規ファイル名」欄の入力をスロット名 (拡張子なし) にする。
+
+    前後の空白を除き、末尾の `.json` (大文字小文字を問わない) を 1 つ外す。スロット名には
+    _session_path が常に `.json` を付けるため、利用者が `test.json` と書くと
+    `test.json.json` に保存されていた (2026-10-21 のリモート運用での報告)。正規化は新規名の
+    入力にだけかける: 一覧 (上書き・復元) は既存ファイルの stem をそのまま使うので、既に
+    `test.json.json` で保存されたスロット `test.json` もこれまでどおり同じファイルに向かう。
+    """
+    name = name.strip()
+    if name.lower().endswith(".json"):
+        name = name[:-5].strip()
+    return name
+
+
 def _session_path(directory: str, name: str) -> _pathlib_mod.Path:
     # パス区切りや `..` を含む名前は wip_dirs の外への書き込み・削除に
     # つながる (例 "../../home/userB/x") ため拒否する

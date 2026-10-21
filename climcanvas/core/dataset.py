@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import glob
 import json
+import os
 import warnings
 
 import numpy as np
@@ -51,6 +53,30 @@ ROLE_TIME_OVERRIDE_ATTR = "_climcanvas_role_time"
 # open + assign_coords 行を出すために参照する (1対1対応)。暦変換の attr と同じ
 # メモリ上だけの目印
 COORD_FILES_ATTR = "_climcanvas_coord_files"
+
+# 複数ファイル (時刻の異なる日別ファイル群など) を座標で結合して開いたことを記録する
+# dataset attrs キー。値は JSON 文字列 `{"spec": 指定文字列, "paths": [絶対パス, ...]}`
+# (paths は読み込み時の展開結果)。scriptgen が open_mfdataset 行 (ワイルドカード指定なら
+# パターン + 生成時の件数のコメント、一覧指定なら明示リスト) を出すために参照する
+# (1対1対応)。暦変換の attr と同じメモリ上だけの目印。計画 = docs/multifile_glob_plan.md
+MULTI_FILE_ATTR = "_climcanvas_multi_file"
+
+# パス欄の指定文字列の種別 (classify_path_spec の戻り値)
+PATH_SPEC_SINGLE = "single"   # 1 ファイル
+PATH_SPEC_GLOB = "glob"       # ワイルドカード (* ? [) を含むパターン
+PATH_SPEC_LIST = "list"       # 1 行 1 パスの一覧テキスト
+_GLOB_MAGIC = "*?["
+_LIST_FILE_SUFFIXES = (".lst",)   # .txt は使わない (紛らわしさを避け .lst に統一、2026-10-21)
+
+# xr.open_mfdataset に渡す引数。scriptgen が生成スクリプトに同じ引数を書く (1対1対応)。
+# - by_coords: 各ファイルの座標値 (時刻) で並べて結合する (ファイル名順に依存しない)
+# - join="exact": 格子 (lat / lon / level) の違うファイルが混ざったら失敗させる
+#   (既定の outer join は NaN で埋めて黙って通す — 誤誘導への備え)
+# - data_vars / coords = "minimal" + compat="override": 結合次元を持たない変数・座標は
+#   先頭ファイルのものを使い、値の比較はしない (ファイル数に比例した読み込みを避ける)
+# - decode_timedelta=False: open_dataset と同じ (timedelta64 デコードの無効化)
+MFDATASET_KWARGS = dict(combine="by_coords", join="exact", data_vars="minimal",
+                        coords="minimal", compat="override", decode_timedelta=False)
 
 
 def _convert_cftime_calendar(ds: xr.Dataset) -> xr.Dataset:
@@ -127,6 +153,124 @@ def open_dataset(path: str) -> xr.Dataset:
 def open_coord_file(path: str) -> xr.Dataset:
     """座標ファイル (経緯度だけのファイル) を開く。scriptgen の open 行と1対1対応。"""
     return xr.open_dataset(path, decode_timedelta=False)
+
+
+def classify_path_spec(spec: str) -> str:
+    """パス欄の指定文字列の種別を返す。
+
+    - PATH_SPEC_GLOB: ワイルドカード (``*`` ``?`` ``[``) を含む (例 ``hgt/*.nc``)
+    - PATH_SPEC_LIST: 拡張子が .lst (1 行 1 パスの一覧テキスト。大文字小文字は問わない)
+    - PATH_SPEC_SINGLE: それ以外 (1 つの netCDF ファイル)
+    """
+    if any(c in spec for c in _GLOB_MAGIC):
+        return PATH_SPEC_GLOB
+    if spec.lower().endswith(_LIST_FILE_SUFFIXES):
+        return PATH_SPEC_LIST
+    return PATH_SPEC_SINGLE
+
+
+def _expand_glob(pattern: str) -> list[str]:
+    """ワイルドカードを実在するファイルの絶対パスに展開する (名前順。ディレクトリは除く、
+    ``**`` の再帰展開はしない)。"""
+    return sorted(p for p in glob.glob(pattern) if os.path.isfile(p))
+
+
+def resolve_path_spec(spec: str) -> list[str]:
+    """指定文字列を実在するファイルの絶対パスのリストに展開する。
+
+    - single: そのファイル 1 つ (無ければ ValueError)
+    - glob: ``~`` を展開して絶対パスにしたパターンに一致するファイル (名前順。0 件は ValueError)
+    - list: 一覧テキストを読み、書かれた順に並べる (重複は最初の 1 回だけ)。各行は絶対パス
+      (``~`` は展開する) で、行内にワイルドカードを書いてもよい。空行と ``#`` 以降は無視。
+      相対パスの行・存在しないファイルの行・一致 0 件のパターンの行は、行番号を付けた
+      ValueError (相対パスは「どこ基準か」の曖昧さを残さないため禁止。2026-10-21 決定)
+
+    戻り値の並びは表示とスクリプトの明示リストに使う。結合の順序は open_dataset_multi
+    (by_coords) が座標値で決めるので、ここでの並びには依存しない。
+    メッセージは英語 (UI 側で翻訳して表示する)。
+    """
+    kind = classify_path_spec(spec)
+    expanded = os.path.abspath(os.path.expanduser(spec))
+    if kind == PATH_SPEC_GLOB:
+        paths = _expand_glob(expanded)
+        if not paths:
+            raise ValueError(f"No file matches pattern: {expanded}")
+        return paths
+    if kind == PATH_SPEC_SINGLE:
+        if not os.path.isfile(expanded):
+            raise ValueError(f"File not found: {expanded}")
+        return [expanded]
+    # 一覧テキスト
+    if not os.path.isfile(expanded):
+        raise ValueError(f"List file not found: {expanded}")
+    with open(expanded, encoding="utf-8") as f:
+        raw_lines = f.read().splitlines()
+    paths: list[str] = []
+    seen: set[str] = set()
+    for lineno, raw in enumerate(raw_lines, 1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        line = os.path.expanduser(line)
+        where = f"{expanded}:{lineno}"
+        if not os.path.isabs(line):
+            raise ValueError(f"{where}: relative path is not allowed "
+                             f"(write an absolute path): {line}")
+        if classify_path_spec(line) == PATH_SPEC_GLOB:
+            matched = _expand_glob(os.path.abspath(line))
+            if not matched:
+                raise ValueError(f"{where}: no file matches pattern: {line}")
+        else:
+            matched = [os.path.abspath(line)]
+            if not os.path.isfile(matched[0]):
+                raise ValueError(f"{where}: file not found: {line}")
+        for p in matched:
+            if p not in seen:
+                seen.add(p)
+                paths.append(p)
+    if not paths:
+        raise ValueError(f"List file has no file entries: {expanded}")
+    return paths
+
+
+def open_dataset_multi(paths: list[str], spec: str | None = None) -> xr.Dataset:
+    """複数ファイルを座標で結合して 1 つの Dataset として開く (遅延読み込み。dask が必要)。
+
+    paths は resolve_path_spec の結果 (実在する絶対パス)。spec はユーザーが欄に書いた
+    指定文字列で、展開結果と一緒に attrs の MULTI_FILE_ATTR に残す (scriptgen が参照)。
+    結合の引数は MFDATASET_KWARGS (scriptgen の open_mfdataset 行と1対1対応)。
+    暦の変換は open_dataset と同じ (_convert_cftime_calendar)。
+    1 件だけでも open_mfdataset を使う (ユーザーの指定どおりにスクリプトへ写すため)。
+    格子の不一致 (join="exact") や時刻の重複は xarray の ValueError をそのまま含めた
+    ValueError (英語) にして投げる。
+    """
+    paths = [str(p) for p in paths]
+    if not paths:
+        raise ValueError("No files to open")
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message="Unable to decode time axis",
+            category=xr.SerializationWarning)
+        try:
+            ds = xr.open_mfdataset(paths, **MFDATASET_KWARGS)
+        except ValueError as exc:
+            raise ValueError(f"Cannot combine {len(paths)} files into one dataset: "
+                             f"{exc}") from exc
+    ds = _convert_cftime_calendar(ds)
+    ds.attrs[MULTI_FILE_ATTR] = json.dumps({"spec": spec, "paths": paths})
+    return ds
+
+
+def open_path_spec(spec: str) -> xr.Dataset:
+    """パス欄の指定文字列 (1 ファイル / ワイルドカード / 一覧テキスト) を開く便利関数。
+
+    single は open_dataset、それ以外は resolve_path_spec → open_dataset_multi。
+    テストやランナー用。アプリは許可ディレクトリの検査とキャッシュキーのために
+    resolve と open を分けて呼ぶ。
+    """
+    if classify_path_spec(spec) == PATH_SPEC_SINGLE:
+        return open_dataset(os.path.expanduser(spec))
+    return open_dataset_multi(resolve_path_spec(spec), spec=spec)
 
 
 def attach_coord_files(ds: xr.Dataset,
