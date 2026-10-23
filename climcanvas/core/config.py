@@ -97,6 +97,7 @@ def default_time_label() -> dict:
         "text": None,
         "loc": "left",             # left / center / right (matplotlib set_title)
         "format": None,            # strftime 書式 (例: "%Y-%m-%d"). None は raw text
+        "fontsize": None,          # 文字サイズ (pt)。None で matplotlib の既定 (axes.titlesize = 12)。UI は 12 を入れる
     }
 
 

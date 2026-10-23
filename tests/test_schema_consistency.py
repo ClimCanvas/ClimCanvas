@@ -45,6 +45,7 @@ def _schema_map() -> dict[str, set[str]]:
         "refline": set(C.default_refline()),
         "legend": legend_keys,
         "legend_cfg": legend_keys,
+        "tl": set(C.default_time_label()),
     }
 
 

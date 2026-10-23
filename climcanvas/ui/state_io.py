@@ -75,7 +75,7 @@ _PRESET_INCLUDE_PREFIXES = (
     # アニメーション (anim_play_ 等のボタンはセッション除外側で弾かれる)
     "anim_fps", "anim_format", "anim_dpi",
     # 時刻表示
-    "show_time_label", "tl_loc", "tl_fmt_",
+    "show_time_label", "tl_loc", "tl_fmt_", "tl_fs_",
     # fill 系
     "cmap_",          # cmap_group_{lid} / cmap_{lid}_{group}
     "rev_",           # fill reverse cmap

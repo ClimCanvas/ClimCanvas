@@ -3180,6 +3180,7 @@ def _panel_editor_ui(pid: int, datasets, ds, roles, mode_options):
             "text": str(selection[roles["time"]]),
             "loc": time_label_settings["loc"],
             "format": time_label_settings["format"],
+            "fontsize": time_label_settings.get("fontsize"),
         }
     panel["title"] = title or None
     panel["title_fontsize"] = title_fontsize

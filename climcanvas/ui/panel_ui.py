@@ -712,10 +712,12 @@ def selection_widgets(ds, roles, used_vars, keep_dims, mode_key,
     を選べる。時刻次元が無いデータでも回転のみの UI を出す)。
 
     戻り値: (selection, time_label_settings)。
-      time_label_settings = {"show": bool, "loc": str, "format": str | None}
+      time_label_settings = {"show": bool, "loc": str, "format": str | None,
+                             "fontsize": int | None}
     """
     selection = {}
-    time_label_settings = {"show": False, "loc": "left", "format": None}
+    time_label_settings = {"show": False, "loc": "left", "format": None,
+                           "fontsize": None}
     seen = list(skip_dims)
     section_header(t(header_label))
     for var in used_vars:
@@ -744,6 +746,10 @@ def selection_widgets(ds, roles, used_vars, keep_dims, mode_key,
                         loc = st.selectbox(t("位置"), list(_TL_LOC_LABELS),
                                            format_func=tr_labels(_TL_LOC_LABELS).get,
                                            key=f"tl_loc_{mode_key}")
+                        # 既定 12 = matplotlib の axes.titlesize (large) と同じ pt を
+                        # そのまま見せる (タイトル文字サイズと同じ流儀。0 で未指定)
+                        fontsize = fontsize_input(t("文字サイズ"), f"tl_fs_{mode_key}",
+                                                  default=12, show_auto_hint=False)
                         # strftime 書式は datetime64 のときだけ (数値時刻 —
                         # cftime 由来の通し日数軸や時刻役割の上書き — では無意味)
                         fmt = (strftime_format_ui(t("時刻の書式"),
@@ -754,6 +760,7 @@ def selection_widgets(ds, roles, used_vars, keep_dims, mode_key,
                             "show": True,
                             "loc": loc,
                             "format": fmt,
+                            "fontsize": fontsize,
                         }
                 if show_animation:
                     animation_ui(ds, mode_key, labels, sel_vals, dim, roles,

@@ -1333,6 +1333,39 @@ def test_titles_labels_legend_texts_and_marker():
     assert marker_pts, "マーカー注釈 (700, 5) が見つからない"
 
 
+def test_time_label_fontsize_default_and_explicit():
+    """時刻ラベル (time_label) の文字サイズ: fontsize 未指定なら matplotlib の既定
+    (axes.titlesize = 中央タイトルと同じ大きさ)、指定すればその pt。位置は loc に従い、
+    タイトル側の大きさは変わらない。"""
+    from matplotlib.text import Text
+
+    def _title_artist(ax, s):
+        arts = [a for a in ax.findobj(Text) if a.get_text() == s]
+        assert len(arts) == 1, f"タイトル文字列 {s!r} が {len(arts)} 個"
+        return arts[0]
+
+    ds = _bars_ds()
+    _use(ds)
+    line = mc_config.default_line_layer("ds0", "p")
+    panel = _line_panel_for([line])
+    panel["title"] = "TITLE"
+    stamp = "2024-01-01T06:00:00"
+    panel["time_label"] = {"show": True, "text": stamp, "loc": "right"}
+    fig = _render(panel)
+    ax = fig.axes[0]
+    assert ax.get_title(loc="right") == stamp
+    title_fs = _title_artist(ax, "TITLE").get_fontsize()
+    assert _title_artist(ax, stamp).get_fontsize() == title_fs
+    plt.close(fig)
+
+    panel["time_label"]["fontsize"] = 7
+    fig = _render(panel)
+    ax = fig.axes[0]
+    assert _title_artist(ax, stamp).get_fontsize() == 7
+    assert _title_artist(ax, "TITLE").get_fontsize() == title_fs
+    plt.close(fig)
+
+
 # --- 1-29: heatmap パネル — 行列値と数値注記 ---
 
 def test_heatmap_matrix_and_annotations():

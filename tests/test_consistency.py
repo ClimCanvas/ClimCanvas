@@ -28,7 +28,7 @@ def _simple_config():
     panel = mc_config.default_panel()
     panel["selection"] = {"time": "2024-01-01T06:00:00", "level": 500.0}
     panel["title"] = "air temperature at 500 hPa"
-    panel["time_label"] = {"show": True, "text": "2024-01-01T06:00:00"}
+    panel["time_label"] = {"show": True, "text": "2024-01-01T06:00:00", "fontsize": 9}
     layer = mc_config.default_fill_layer("ds0", "t")
     layer["style"].update({"cmap": "RdBu_r", "vmin": 230.0, "vmax": 300.0, "levels": 15})
     layer["style"]["colorbar"].update({"label": "air temperature [K]"})

@@ -60,6 +60,8 @@ from .render import (
     continuous_cbar_extend,
     legend_kwargs,
     line_label_kwargs,
+    time_label_kwargs,
+    format_time_label,
     marker_annotation_kwargs,
     require_increasing_levels,
     region_indexers,
@@ -1579,25 +1581,25 @@ class _ScriptBuilder:
                 self.body.append(f"ax.set_title({panel['title']!r})")
         tl = panel.get("time_label", {})
         if tl.get("show") and tl.get("text"):
-            loc = tl.get("loc", "left")
+            # 位置・文字サイズは render.time_label_kwargs と共通 (ルール 4)
+            kw = _fmt_kwargs_inline(time_label_kwargs(tl))
             fmt = tl.get("format")
             if self.animation_time_dim:
                 if fmt:
                     self.needs_pandas = True
                     self.body.append(
                         f"ax.set_title(pd.Timestamp({self.animation_time_var}).strftime({fmt!r}), "
-                        f"loc={loc!r})")
+                        f"{kw})")
                 else:
                     self.body.append(
-                        f"ax.set_title(str({self.animation_time_var}), loc={loc!r})")
+                        f"ax.set_title(str({self.animation_time_var}), {kw})")
             else:
                 # 非アニメ時は scriptgen 時点で書式適用 (text の strftime 整形)
                 if fmt:
-                    from .render import format_time_label
                     text = format_time_label(tl["text"], fmt)
                 else:
                     text = tl["text"]
-                self.body.append(f"ax.set_title({text!r}, loc={loc!r})")
+                self.body.append(f"ax.set_title({text!r}, {kw})")
 
     def _text_annotation_lines(self, panel: dict):
         """panel["texts"] を ax.text(...) 呼び出しコードに展開する。

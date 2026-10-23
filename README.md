@@ -46,7 +46,7 @@ commit per release, so the tip of `main` is always the newest version (the
 necessarily the newest). To use a specific version, clone its tag:
 
 ```bash
-git clone --branch v1.04 https://github.com/ClimCanvas/ClimCanvas.git
+git clone --branch v1.04.1 https://github.com/ClimCanvas/ClimCanvas.git
 ```
 
 To update an existing clone, run `git pull` in it; your settings and sessions

@@ -1500,6 +1500,26 @@ def test_land_above_data_checkbox_maps_to_config(sample_path):
     assert at.session_state["panel_cfg_0"]["map"]["land"]["above_data"] is True
 
 
+def test_time_label_fontsize_maps_to_config(sample_path):
+    """「時刻を表示」の「文字サイズ」が time_label.fontsize に入る (既定 12 = matplotlib の
+    タイトル既定と同じ pt をそのまま表示。0 にすると None = 未指定)。"""
+    at = _load_app(sample_path)
+    at.checkbox(key="show_time_label_map0").set_value(True)
+    at.run()
+    assert not at.exception
+    tl = at.session_state["panel_cfg_0"]["time_label"]
+    assert tl["show"] is True
+    assert tl["fontsize"] == 12
+    at.number_input(key="tl_fs_map0").set_value(0)
+    at.run()
+    assert not at.exception
+    assert at.session_state["panel_cfg_0"]["time_label"]["fontsize"] is None
+    at.number_input(key="tl_fs_map0").set_value(9)
+    at.run()
+    assert not at.exception
+    assert at.session_state["panel_cfg_0"]["time_label"]["fontsize"] == 9
+
+
 def test_animation_script_follows_path_style(sample_path):
     """アニメーションの再現スクリプトも「netCDFパスの形式」(絶対 / 相対) に従う。
 

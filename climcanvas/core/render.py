@@ -3217,16 +3217,30 @@ def format_time_label(text, fmt) -> str:
         return str(text)
 
 
+def time_label_kwargs(tl: dict) -> dict:
+    """time_label 設定を ax.set_title() の kwargs (loc / fontsize) に変換する。
+
+    fontsize は None (未指定) のとき渡さず、matplotlib の既定 (rcParams の
+    axes.titlesize) に任せる。render / scriptgen の両方から呼ぶ。
+    """
+    kw = {"loc": tl.get("loc", "left")}
+    fs = tl.get("fontsize")
+    if fs:
+        kw["fontsize"] = fs
+    return kw
+
+
 def _draw_time_label(ax, panel: dict):
     """選択中の時刻をプロット領域の上部に表示する。
 
     位置は loc ('left'/'center'/'right') で指定。matplotlib のタイトル位置に乗せると
     上側の目盛りラベルを自動回避でき、中央タイトルと共存できる。
+    文字サイズは fontsize (None で matplotlib の既定)。
     """
     tl = panel.get("time_label", {})
     if tl.get("show") and tl.get("text"):
         text = format_time_label(tl["text"], tl.get("format"))
-        ax.set_title(text, loc=tl.get("loc", "left"))
+        ax.set_title(text, **time_label_kwargs(tl))
 
 
 def _add_colorbar(fig, ax, mappable, cbar_cfg: dict, extend: str | None = None):

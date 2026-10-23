@@ -9,6 +9,13 @@ manual, FAQ, gallery) are not listed either.
 
 ## Unreleased
 
+## 1.04.1 — 2026-10-23
+
+### Added
+
+- "Show time" has a "Font size" input for the time label above the plot (default 12 pt, the same
+  as the title). The reproduction script carries the size as well.
+
 ## 1.04 — 2026-10-21
 
 ### Added
