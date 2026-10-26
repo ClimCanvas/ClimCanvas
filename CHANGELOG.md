@@ -9,6 +9,21 @@ manual, FAQ, gallery) are not listed either.
 
 ## Unreleased
 
+## 1.04.2 — 2026-10-26
+
+### Added
+
+- Session save and restore can go down into subdirectories under the `session_dirs` roots with
+  📂 buttons ("⬆ Up one level" goes back; the root is the upper limit), the same way as the
+  allowed-directory browser for netCDF files. The current location is shown as a "Destination" /
+  "Restore from" line with the full path beneath it. "New subdirectory" on the save side creates a
+  folder directly under the current location.
+
+### Changed
+
+- The "Destination directory" selector is now labelled "Root" and appears only when `session_dirs`
+  lists more than one directory; with a single root the location line is shown instead.
+
 ## 1.04.1 — 2026-10-23
 
 ### Added

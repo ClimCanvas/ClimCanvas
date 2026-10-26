@@ -51,8 +51,9 @@ from climcanvas.ui.data_access import (_add_dataset_to_state,
                                        _remove_dataset_from_state,
                                        browse_into_callback,
                                        detect_grid_projection_cached,
+                                       is_browsable_subdir, list_subdirs,
                                        load_dataset_spec, load_dataset_with_coords,
-                                       resolve_entry)
+                                       resolve_entry, root_of)
 from climcanvas.ui.panel_ui import (axis_basic_ui, axis_labels_ui,
                                     axis_settings_ui, axis_ticks_ui, boxes_ui,
                                     frame_background_ui,
@@ -66,7 +67,8 @@ from climcanvas.ui.notes_ui import format_notes
 from climcanvas.ui.state_io import (STARTUP_PRESET_PATH, _PRESET_ONLY_KEYS,
                                     _delete_startup_preset,
                                     _from_json_safe, _is_session_excluded,
-                                    _list_sessions, _migrate_legacy_value,
+                                    _list_sessions, _make_session_subdir,
+                                    _migrate_legacy_value,
                                     _migrate_loaded_session,
                                     _load_startup_preset_once, _load_session_dirs,
                                     _load_session_from_disk, _save_startup_preset,
@@ -110,6 +112,107 @@ for _k in list(st.session_state.keys()):
     st.session_state[_k] = st.session_state[_k]
 
 
+def _dir_nav_current(cur_root: str, key_prefix: str) -> str:
+    """ルート cur_root の配下を辿るディレクトリブラウザの現在地を管理し、その絶対パスを返す。
+
+    現在地は session_state[f"{key_prefix}_cur"] (widget ではないので rerun をまたいで残る)。
+    ルートが切り替わった (前回 f"{key_prefix}_last_root" と違う)・現在地が未設定・現在地が
+    ルートの配下にない (注入、設定の書き換え、外を指す symlink) ときはルートに戻す。
+    netCDF の `_allowed_dir_browser` とセッションの `_session_dir_browser` が共用する。
+    """
+    cur_key = f"{key_prefix}_cur"
+    last_key = f"{key_prefix}_last_root"
+    cur = st.session_state.get(cur_key)
+    if (cur is None or st.session_state.get(last_key) != cur_root
+            or root_of(cur, [cur_root]) is None):
+        cur = cur_root
+        st.session_state[cur_key] = cur_root
+        st.session_state[last_key] = cur_root
+    return cur
+
+
+def _dir_nav_buttons(cur_root: str, cur: str, subdirs: list[str], key_prefix: str) -> None:
+    """ディレクトリブラウザの「⬆ 上の階層へ」(ルートでは出さない) と 📂 サブディレクトリの
+    ボタン列。押すと現在地 (session_state[f"{key_prefix}_cur"]) を変えて rerun する。
+    subdirs は呼び出し側が `is_browsable_subdir` / `list_subdirs` で絞った名前の列。"""
+    cur_key = f"{key_prefix}_cur"
+    if os.path.realpath(cur) != os.path.realpath(cur_root):
+        if st.button(t("⬆ 上の階層へ"), key=f"{key_prefix}_up"):
+            st.session_state[cur_key] = os.path.dirname(cur)
+            st.rerun()
+    if subdirs:
+        st.markdown(t("**サブディレクトリ**"))
+        for d in subdirs:
+            if st.button(f"📂 {d}", key=f"{key_prefix}_dir_{d}"):
+                st.session_state[cur_key] = os.path.join(cur, d)
+                st.rerun()
+
+
+def _nav_location(cur_root: str, cur: str) -> str:
+    """ディレクトリブラウザの現在地の表示文字列「ルート名/相対パス」(ルート自身なら「ルート名/」)。
+    トップの "/" 表示は FS ルートと紛らわしく、ルート名を頭に付ければ複数のルートを切替えても
+    どこにいるか分かる。相対パスが取れない (ドライブ違い等) ときは絶対パスのまま。"""
+    root_name = os.path.basename(os.path.normpath(cur_root))
+    try:
+        rel = os.path.relpath(cur, cur_root)
+        return root_name + "/" + (rel if rel != "." else "")
+    except ValueError:
+        return cur
+
+
+# セッションの保存先ブラウザの現在地の行 (側 → 日本語原文。表示は t() で現在言語に)
+_SESSION_BROWSER_LABELS = {"save": "**保存先**: `{path}`", "restore": "**復元元**: `{path}`"}
+
+
+def _session_dir_browser(roots: list[str], side: str, root_help: str | None = None,
+                         allow_mkdir: bool = False) -> str:
+    """session_dirs のルートから下の階層へ辿って、セッションの保存先・復元元ディレクトリを選ぶ
+    (2026-10-26。netCDF の `_allowed_dir_browser` と同じ構成: ルートの selectbox「ルート」は
+    roots が複数のときだけ、現在地の行、⬆ 上の階層へ / 📂 サブディレクトリ)。
+    選択中のディレクトリ (絶対パス) を返す。side は "save" (保存側) / "restore" (復元側) で、
+    widget key の接頭辞 `_sessdir_{side}` と selectbox の key `_session_{side}_dir`、現在地の行の
+    文言 (`_SESSION_BROWSER_LABELS`: 保存先 / 復元元) を決める。
+
+    現在地は「**保存先**: `ルート名/相対パス`」の行 (`_nav_location`) で常に示し、その直下に
+    絶対パスの caption (折り返す) を添える。selectbox は 1 行固定で長い名前の末尾が「…」に
+    落ちるため、表示は shorten_label で短くする。ルートの selectbox を「保存先ディレクトリ」と
+    呼んでいた間は、下の階層に居てもルートの名前のままで紛らわしかった (2026-10-26 指摘)。
+    root_help (設定ファイルの案内) は selectbox があればそこに、無ければ現在地の行に付ける。
+    ルートより上には出られない。allow_mkdir (保存側) では「新しいサブディレクトリ」の
+    ポップオーバーを出し、現在地の直下に作って現在地をそこへ移す (名前の検査は
+    `_make_session_subdir`)。
+    """
+    key_prefix = f"_sessdir_{side}"
+    if len(roots) > 1:
+        cur_root = st.selectbox(t("ルート"), roots, key=f"_session_{side}_dir",
+                                format_func=shorten_label, help=root_help)
+        root_help = None
+    else:
+        cur_root = roots[0]
+    cur = _dir_nav_current(cur_root, key_prefix)
+    st.markdown(t(_SESSION_BROWSER_LABELS[side], path=_nav_location(cur_root, cur)),
+                help=root_help)
+    st.caption(md_plain(cur))
+    _dir_nav_buttons(cur_root, cur, list_subdirs(cur), key_prefix)
+    if allow_mkdir:
+        with st.popover(t("新しいサブディレクトリ"), icon=":material/create_new_folder:"):
+            _mk_name = st.text_input(t("サブディレクトリ名"), key=f"{key_prefix}_mkdir_name",
+                                     placeholder=t("例: exp2026"))
+            if st.button(t("作成"), key=f"{key_prefix}_mkdir_btn",
+                         disabled=not _mk_name.strip()):
+                try:
+                    _new_dir = _make_session_subdir(cur, _mk_name)
+                except ValueError:
+                    st.error(t("サブディレクトリ名にパス区切りや `..` は使えず、"
+                               "ドット始まりもできません: {name}", name=_mk_name.strip()))
+                except OSError as e:
+                    st.error(t("作成失敗: {e}", e=e))
+                else:
+                    st.session_state[f"{key_prefix}_cur"] = str(_new_dir)
+                    st.rerun()
+    return cur
+
+
 def _allowed_dir_browser(allowed_dirs: list[str], target_key: str,
                          key_prefix: str = "_browse", allow_multi: bool = False) -> None:
     """許可ディレクトリの中を辿って .nc を選ぶ Streamlit ネイティブのブラウザ。
@@ -126,56 +229,29 @@ def _allowed_dir_browser(allowed_dirs: list[str], target_key: str,
     """
     st.caption(t("許可されているディレクトリ: {dirs}",
                  dirs=", ".join(f"`{d}`" for d in allowed_dirs)))
-    root_key = f"{key_prefix}_root"
-    cur_key = f"{key_prefix}_cur"
-    last_key = f"{key_prefix}_last_root"
-    if st.session_state.get(cur_key) is None:
-        st.session_state[cur_key] = allowed_dirs[0]
-    # ルート (複数の許可 dir があれば selectbox で切替)
+    # ルート (複数の許可 dir があれば selectbox で切替)。現在地の管理と
+    # 上へ / 📂 のボタンはセッションの保存先ブラウザと共用 (_dir_nav_*)
     if len(allowed_dirs) > 1:
-        cur_root = st.selectbox(t("ルート"), allowed_dirs, key=root_key)
-        if (st.session_state.get(last_key) != cur_root):
-            st.session_state[cur_key] = cur_root
-            st.session_state[last_key] = cur_root
+        cur_root = st.selectbox(t("ルート"), allowed_dirs, key=f"{key_prefix}_root")
     else:
         cur_root = allowed_dirs[0]
-        st.session_state[last_key] = cur_root
-    cur = st.session_state[cur_key]
-    # 現在地は「許可ディレクトリ名/相対パス」形式で表示する
-    # (トップの "/" 表示は FS ルートと紛らわしかった。ディレクトリ名を
-    # 頭に付ければ、複数の許可 dir を切替えてもどこにいるか分かる)
-    _root_name = os.path.basename(os.path.normpath(cur_root))
-    try:
-        rel = os.path.relpath(cur, cur_root)
-        _loc = _root_name + "/" + (rel if rel != "." else "")
-    except ValueError:
-        _loc = cur
-    st.markdown(t("**現在地**: `{path}`", path=_loc))
-    # 上へ (ルートから出ない)
-    if os.path.realpath(cur) != os.path.realpath(cur_root):
-        if st.button(t("⬆ 上の階層へ"), key=f"{key_prefix}_up"):
-            st.session_state[cur_key] = os.path.dirname(cur)
-            st.rerun()
+    cur = _dir_nav_current(cur_root, key_prefix)
+    # 現在地は「許可ディレクトリ名/相対パス」形式で表示する (_nav_location)
+    st.markdown(t("**現在地**: `{path}`", path=_nav_location(cur_root, cur)))
     try:
         entries = sorted(os.listdir(cur))
     except OSError as e:
         st.error(t("ディレクトリを開けません: {e}", e=e))
         entries = []
-    subdirs = [e for e in entries
-               if os.path.isdir(os.path.join(cur, e))
-               and not e.startswith(".")]
+    subdirs = [e for e in entries if is_browsable_subdir(cur, e)]
     ncfiles = [e for e in entries
                if e.lower().endswith(".nc")
                and os.path.isfile(os.path.join(cur, e))]
     lstfiles = [e for e in entries
                 if allow_multi and e.lower().endswith(".lst")
                 and os.path.isfile(os.path.join(cur, e))]
-    if subdirs:
-        st.markdown(t("**サブディレクトリ**"))
-        for d in subdirs:
-            if st.button(f"📂 {d}", key=f"{key_prefix}_dir_{d}"):
-                st.session_state[cur_key] = os.path.join(cur, d)
-                st.rerun()
+    # 上へ (ルートから出ない) と 📂 サブディレクトリ
+    _dir_nav_buttons(cur_root, cur, subdirs, key_prefix)
     if ncfiles:
         st.markdown(t("**netCDF ファイル**"))
         if allow_multi and st.button(t("このフォルダの *.nc をすべて"),
@@ -351,16 +427,9 @@ with st.sidebar:
             st.caption(t("サーバーに保存されているセッションを選んで復元する")
                        if _remote else
                        t("この PC に保存されているセッションを選んで復元する"))
-            _restore_dirs = _load_session_dirs()
-            _restore_dir = _restore_dirs[0]
-            # サイドバーの selectbox は 1 行固定で長い名前の末尾が「…」に
-            # 落ちるため、表示は shorten_label (ホーム → ~、中央省略) で短くし、
-            # 全文は直下の caption (折り返す) に出す。値は変えない
-            if len(_restore_dirs) > 1:
-                _restore_dir = st.selectbox(t("ディレクトリ"), _restore_dirs,
-                                            format_func=shorten_label,
-                                            key="_session_restore_dir")
-                st.caption(md_plain(_restore_dir))
+            # ルートの selectbox (session_dirs が複数のとき) + 復元元の行 + 📂 で
+            # 下の階層へ (保存側と同じブラウザ _session_dir_browser)
+            _restore_dir = _session_dir_browser(_load_session_dirs(), "restore")
             _existing = _list_sessions(_restore_dir)
             if _existing:
                 _restore_slot = st.selectbox(
@@ -742,18 +811,24 @@ with st.sidebar:
             _session_dirs = _load_session_dirs()
             # 復元・名前を付けて保存の直後は、編集中のスロットを
             # 「保存するスロット」に自動選択する (widget 描画前にここで反映。
-            # ハンドラからの直接代入は描画順の制約があるため pending 経由)
+            # ハンドラからの直接代入は描画順の制約があるため pending 経由)。
+            # ディレクトリはサブディレクトリでもよく、属するルートを selectbox に、
+            # ディレクトリ自身をブラウザの現在地に入れる (ルートの外なら触らない)
             _ow_pending = st.session_state.pop("_session_ow_pending", None)
             if _ow_pending:
-                if _ow_pending["dir"] in _session_dirs:
-                    st.session_state["_session_save_dir"] = _ow_pending["dir"]
+                _ow_root = root_of(_ow_pending["dir"], _session_dirs)
+                if _ow_root is not None:
+                    st.session_state["_session_save_dir"] = _ow_root
+                    st.session_state["_sessdir_save_cur"] = _ow_pending["dir"]
+                    st.session_state["_sessdir_save_last_root"] = _ow_root
                 st.session_state["_session_overwrite_slot"] = _ow_pending["name"]
-            # 表示の短縮と全文 caption は「作業の再開」の復元側と同じ流儀
-            _session_dir = st.selectbox(
-                t("保存先ディレクトリ"), _session_dirs, key="_session_save_dir",
-                format_func=shorten_label,
-                help=t("`~/.climcanvas/config.toml` の `session_dirs` に追加候補を書ける"))
-            st.caption(md_plain(_session_dir))
+            # ルートの selectbox (session_dirs が複数のとき) + 保存先の行 + 📂 で
+            # 下の階層へ + 新しいサブディレクトリ
+            _session_dir = _session_dir_browser(
+                _session_dirs, "save",
+                root_help=t("`~/.climcanvas/config.toml` の `session_dirs` に追加候補を書ける。"
+                            "その下の階層は 📂 で辿り、「新しいサブディレクトリ」で作れる"),
+                allow_mkdir=True)
             # 既存スロットへの上書き (スロット選択 + 上書きボタン)
             _existing_save = _list_sessions(_session_dir)
             # 選択値が一覧に無ければ既定へ戻す (dir 切替・外部削除への防御)

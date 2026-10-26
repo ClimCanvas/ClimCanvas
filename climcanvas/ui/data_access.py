@@ -213,6 +213,43 @@ def _is_path_allowed(path: str, allowed_dirs: list[str]) -> bool:
     return False
 
 
+def root_of(path: str, roots: list[str]) -> str | None:
+    """path を配下に含む (または path そのものである) ディレクトリを roots から返す。無ければ None。
+
+    `_is_path_allowed` と同じく realpath で比べるので、ルートの外を指す symlink は配下と
+    見なさない。返す値は roots の要素そのまま (selectbox の選択値に使えるように realpath には
+    しない)。roots が空なら None (`_is_path_allowed` の「空 = 制限なし」とは違う)。
+    ディレクトリブラウザの現在地がルートの配下か (迷い込み・注入の検査) と、セッション保存先の
+    `session_dirs` 配下判定 (state_io) に使う。
+    """
+    for r in roots:
+        if _is_path_allowed(path, [r]):
+            return r
+    return None
+
+
+def is_browsable_subdir(directory: str, name: str) -> bool:
+    """directory 直下の name がディレクトリブラウザで辿れるサブディレクトリか。
+
+    ドット始まり (隠し) と、directory の外を指す symlink は辿れない (辿れる範囲をルートの
+    配下に限る。外を指す symlink の中のファイルは `_is_path_allowed` で拒まれるので、
+    入口で見せない)。
+    """
+    path = os.path.join(directory, name)
+    return (os.path.isdir(path) and not name.startswith(".")
+            and root_of(path, [directory]) is not None)
+
+
+def list_subdirs(directory: str) -> list[str]:
+    """directory 直下の辿れるサブディレクトリ名 (`is_browsable_subdir`) をソートして返す。
+    開けない・存在しないときは []。"""
+    try:
+        return [e for e in sorted(os.listdir(directory))
+                if is_browsable_subdir(directory, e)]
+    except OSError:
+        return []
+
+
 def _browse_file_callback():
     picked = pick_file_dialog(st.session_state.get("_new_file_path"))
     if picked:

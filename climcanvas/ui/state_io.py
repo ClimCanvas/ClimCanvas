@@ -425,6 +425,19 @@ def _load_session_dirs() -> list[str]:
     return [str(_DEFAULT_SESSION_DIR)]
 
 
+def _require_session_dir(directory: str) -> None:
+    """directory が session_dirs のいずれかの配下 (ルート自身を含む) でなければ ValueError。
+
+    保存・復元・サブディレクトリ作成の入口で呼ぶ。保存先はルートの下の階層も選べる
+    (2026-10-26) ため、選択中のディレクトリは session_state に入る。設定の書き換えや古い状態
+    からの迷い込み、ルートの外を指す symlink で外を指しうるので、スロット名の `..` 拒否
+    (`_session_path`) と同じ位置づけでここでも拒む。symlink は realpath で解決して比べる。
+    """
+    from climcanvas.ui.data_access import root_of
+    if root_of(directory, _load_session_dirs()) is None:
+        raise ValueError(f"session_dirs の外のディレクトリです: {directory}")
+
+
 def _list_sessions(directory: str) -> list[str]:
     """directory 内の `.json` ファイル名 (stem) をソートして返す。"""
     try:
@@ -459,9 +472,28 @@ def _session_path(directory: str, name: str) -> _pathlib_mod.Path:
     return _pathlib_mod.Path(directory) / f"{name}.json"
 
 
+def _make_session_subdir(directory: str, name: str) -> _pathlib_mod.Path:
+    """directory の直下にサブディレクトリ name を作って返す (既にあればそのまま)。
+
+    directory は session_dirs の配下でなければならない (`_require_session_dir`)。name は前後の
+    空白を除いた 1 階層の名前だけ: パス区切り・`..` はスロット名と同じ理由で拒み、ドット始まりは
+    ブラウザに出ない (`list_subdirs` が隠す) ので拒む。違反は ValueError (表示文は UI 側で付ける)。
+    """
+    name = name.strip()
+    if (not name or name in (".", "..") or name != os.path.basename(name)
+            or name.startswith(".")):
+        raise ValueError(f"サブディレクトリ名に使えません: {name!r}")
+    _require_session_dir(directory)
+    target = _pathlib_mod.Path(directory) / name
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
 def _save_session_to_disk(directory: str, name: str) -> int:
-    """現在の session_state を `<directory>/<name>.json` に書き出す。書いた項目数を返す。"""
+    """現在の session_state を `<directory>/<name>.json` に書き出す。書いた項目数を返す。
+    directory は session_dirs の配下に限る (`_require_session_dir`)。"""
     import json as _json
+    _require_session_dir(directory)
     target_dir = _pathlib_mod.Path(directory)
     target_dir.mkdir(parents=True, exist_ok=True)
     session = _serialize_session()
@@ -475,8 +507,10 @@ def _load_session_from_disk(directory: str, name: str) -> int:
     """`<directory>/<name>.json` を読んで session_state に書き戻す。
 
     既存の値は上書きされる。読み込んだ項目数を返す。
+    directory は session_dirs の配下に限る (`_require_session_dir`)。
     """
     import json as _json
+    _require_session_dir(directory)
     path = _session_path(directory, name)
     if not path.is_file():
         return 0

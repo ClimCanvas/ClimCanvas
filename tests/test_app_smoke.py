@@ -1555,3 +1555,125 @@ def test_session_name_json_suffix_is_stripped(sample_path, tmp_path):
     at.run()
     assert not at.exception and not at.error, [e.value for e in at.error]
     assert _os.path.getsize(_os.path.join(session_dir, "old.json.json")) > 2
+
+
+def test_session_subdir_browser_save_and_restore(sample_path, tmp_path, monkeypatch):
+    """セッションの保存先・復元元は session_dirs のルートから 📂 で下の階層へ辿れる (2026-10-26 要望。
+    netCDF の許可ディレクトリブラウザと同じ流儀)。サブディレクトリに保存 → 復元側も同じ階層を辿ると
+    一覧に出る → 復元すると保存側の現在地がそのディレクトリになる。ドット始まりのディレクトリは出ない、
+    ルートでは「上へ」は出ない、ルートの外を指す現在地 (注入) はルートに戻る。"""
+    root = tmp_path / "sessions"
+    (root / "proj" / "sub").mkdir(parents=True)
+    (root / ".hidden").mkdir()
+    monkeypatch.setenv("CC_SESSION_DIRS", str(root))
+    at = _load_app(sample_path)
+    keys = {b.key for b in at.get("button")}
+    assert "_sessdir_save_dir_proj" in keys and "_sessdir_restore_dir_proj" in keys
+    assert "_sessdir_save_dir_.hidden" not in keys
+    assert "_sessdir_save_up" not in keys and "_sessdir_restore_up" not in keys
+    _button(at, "_sessdir_save_dir_proj").set_value(True)
+    at.run()
+    _button(at, "_sessdir_save_dir_sub").set_value(True)
+    at.run()
+    assert not at.exception
+    assert at.session_state["_sessdir_save_cur"] == str(root / "proj" / "sub")
+    assert any("proj" in c.value and "sub" in c.value for c in at.caption)
+    assert any("sessions/proj/sub" in m.value and "保存先" in m.value for m in at.markdown)
+    assert all(w.key != "_session_save_dir" for w in at.selectbox)   # ルート 1 つなら selectbox なし
+    at.text_input(key="_session_save_name").set_value("deep")
+    at.run()
+    _button(at, "_session_save_btn").set_value(True)
+    at.run()
+    assert not at.exception and not at.error, [e.value for e in at.error]
+    assert (root / "proj" / "sub" / "deep.json").is_file()
+    # 保存後も現在地はそのサブディレクトリのまま (pending 経由) で、上書き候補に自動選択
+    assert at.session_state["_sessdir_save_cur"] == str(root / "proj" / "sub")
+    assert at.session_state["_session_overwrite_slot"] == "deep"
+    _button(at, "_sessdir_save_up").set_value(True)
+    at.run()
+    assert at.session_state["_sessdir_save_cur"] == str(root / "proj")
+    # ルートの外を指す現在地はルートに戻す
+    at.session_state["_sessdir_save_cur"] = str(tmp_path / "outside")
+    at.run()
+    assert not at.exception
+    assert at.session_state["_sessdir_save_cur"] == str(root)
+    # 復元側: ルート直下にセッションは無く、proj/sub まで辿ると一覧に出る
+    at2 = _load_app(sample_path)
+    assert all(w.key != "_session_restore_slot" for w in at2.selectbox)
+    _button(at2, "_sessdir_restore_dir_proj").set_value(True)
+    at2.run()
+    _button(at2, "_sessdir_restore_dir_sub").set_value(True)
+    at2.run()
+    assert at2.selectbox(key="_session_restore_slot").options == ["deep"]
+    _button(at2, "_session_restore_btn").set_value(True)
+    at2.run()
+    assert not at2.exception
+    at2.run()
+    assert not at2.exception and not at2.error
+    assert at2.session_state["_sessdir_save_cur"] == str(root / "proj" / "sub")
+    assert at2.session_state["_session_overwrite_slot"] == "deep"
+    assert at2.session_state["_session_provenance"] == {"kind": "slot", "name": "deep"}
+
+
+def test_session_subdir_create(sample_path, tmp_path, monkeypatch):
+    """保存側の「新しいサブディレクトリ」: 現在地の直下に作って現在地をそこへ移し、保存はそこに書かれる。
+    パス区切り・`..`・ドット始まりは拒んでエラーを出し、何も作らない。ルートが未作成でも作れる。"""
+    root = tmp_path / "sessions"          # 未作成
+    monkeypatch.setenv("CC_SESSION_DIRS", str(root))
+    at = _load_app(sample_path)
+    at.text_input(key="_sessdir_save_mkdir_name").set_value(" exp2026 ")
+    at.run()
+    _button(at, "_sessdir_save_mkdir_btn").set_value(True)
+    at.run()
+    assert not at.exception and not at.error, [e.value for e in at.error]
+    assert (root / "exp2026").is_dir()
+    assert at.session_state["_sessdir_save_cur"] == str(root / "exp2026")
+    for bad in ("../x", "a/b", ".hidden", ".."):
+        at.text_input(key="_sessdir_save_mkdir_name").set_value(bad)
+        at.run()
+        _button(at, "_sessdir_save_mkdir_btn").set_value(True)
+        at.run()
+        assert not at.exception
+        assert at.error and "サブディレクトリ名" in at.error[0].value, bad
+        assert at.session_state["_sessdir_save_cur"] == str(root / "exp2026")
+    assert not (tmp_path / "x").exists() and not (root / "a").exists()
+    assert not (root / "exp2026" / ".hidden").exists()
+    at.text_input(key="_session_save_name").set_value("s1")
+    at.run()
+    _button(at, "_session_save_btn").set_value(True)
+    at.run()
+    assert not at.exception and not at.error, [e.value for e in at.error]
+    assert (root / "exp2026" / "s1.json").is_file()
+
+
+def test_session_dir_guard_rejects_outside(tmp_path, monkeypatch):
+    """保存・復元・サブディレクトリ作成は session_dirs の配下以外のディレクトリを拒む (選択中の
+    ディレクトリは session_state 経由なので、設定の書き換え・注入で外を指しうる)。配下判定
+    (root_of) は realpath で比べ、ルートの外を指す symlink と隠しディレクトリは一覧 (list_subdirs)
+    に出ない。"""
+    import pytest
+    from climcanvas.ui.data_access import list_subdirs, root_of
+    from climcanvas.ui.state_io import (_load_session_from_disk, _make_session_subdir,
+                                        _save_session_to_disk)
+    root = tmp_path / "sessions"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.setenv("CC_SESSION_DIRS", str(root))
+    with pytest.raises(ValueError):
+        _save_session_to_disk(str(outside), "x")
+    with pytest.raises(ValueError):
+        _load_session_from_disk(str(outside), "x")
+    with pytest.raises(ValueError):
+        _make_session_subdir(str(outside), "y")
+    assert not (outside / "y").exists()
+    assert root_of(str(root / "a" / "b"), [str(outside), str(root)]) == str(root)
+    assert root_of(str(root), [str(root)]) == str(root)
+    assert root_of(str(outside / "a"), [str(root)]) is None
+    assert root_of(str(root), []) is None
+    (root / "in").mkdir()
+    (root / ".hid").mkdir()
+    (root / "esc").symlink_to(outside, target_is_directory=True)
+    (root / "file.json").write_text("{}", encoding="utf-8")
+    assert list_subdirs(str(root)) == ["in"]
+    assert list_subdirs(str(root / "nope")) == []
