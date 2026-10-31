@@ -10,6 +10,10 @@ Website: <https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/> — with the
 [user manual](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/manual/index.html) and the [FAQ](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/faq.html)
 (also available [in Japanese](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/)).
 
+Try it without installing: <https://climcanvas.streamlit.app/> — a public demo on
+Streamlit Community Cloud with the sample data only (it may take a minute to wake
+up when nobody has used it for a while).
+
 ![Demo of the ClimCanvas GUI: loading a netCDF file, switching plot modes and projections, adding a contour layer, stepping through time and showing the generated script](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/assets/hero-realtime-en.gif)
 
 ## Features

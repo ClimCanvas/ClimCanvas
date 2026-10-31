@@ -6,8 +6,9 @@
 
 A thin wrapper around the real app (``app.py`` at the repository root). It
 switches the app into the demo mode through environment variables, generates
-the sample data when it is missing, pre-fetches the Natural Earth shapefiles
-used by the map layers, and then runs the real app in this process. Nothing
+the two sample files offered by the demo (``data/demo/sample_atmos.nc`` and
+``sample_1d_time.nc``) when they are missing, pre-fetches the Natural Earth
+shapefiles used by the map layers, and then runs the real app in this process. Nothing
 here calls Streamlit, so ``app.py`` still issues ``st.set_page_config`` as the
 first Streamlit command.
 
@@ -26,21 +27,23 @@ from __future__ import annotations
 
 import os
 import runpy
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SAMPLE_DIR = ROOT / "data" / "sample"
+# The only directory the demo can open. It holds just the two files below
+# (data/ is ignored by git, so they are generated at start-up).
+DEMO_DIR = ROOT / "data" / "demo"
 
-# (generator script under scripts/, a file it writes under data/sample/)
-SAMPLE_SCRIPTS = (
-    ("make_sample_data.py", "sample_atmos.nc"),
-    ("make_sample_1d_data.py", "sample_1d_time.nc"),
-    ("make_sample_2d_data.py", "sample_matrix.nc"),
-    ("make_sample_track_data.py", "sample_besttrack.nc"),
-    ("make_sample_curvilinear_data.py", "sample_curvilinear.nc"),
-    ("make_sample_multifile_data.py", "multi/sample_atmos_2024010100.nc"),
+# (file offered by the demo, generator script under scripts/). Each generator
+# writes more files than the one we keep, so it runs in a temporary directory
+# and only the wanted file is copied into DEMO_DIR.
+DEMO_FILES = (
+    ("sample_atmos.nc", "make_sample_data.py"),      # 4-D atmospheric fields (maps, sections, animations)
+    ("sample_1d_time.nc", "make_sample_1d_data.py"),  # 1-D time series (line plots, distributions)
 )
 
 # Natural Earth shapefiles drawn by the map layers (coastlines, land, ocean and
@@ -57,7 +60,7 @@ NATURAL_EARTH_SCALES = ("110m", "50m")
 def configure_environment() -> None:
     """Demo mode: only the sample data can be opened; nothing is written to $HOME."""
     os.environ["CC_MODE"] = "demo"
-    os.environ["CC_ALLOWED_DIRS"] = str(SAMPLE_DIR)
+    os.environ["CC_ALLOWED_DIRS"] = str(DEMO_DIR)
     # The server-side session storage and the startup preset are hidden in the
     # demo mode; point them away from the home directory anyway.
     scratch = Path(os.environ.get("TMPDIR", "/tmp")) / "climcanvas-demo"
@@ -66,11 +69,22 @@ def configure_environment() -> None:
 
 
 def ensure_sample_data() -> None:
-    """Run each sample generator whose output is missing (a few seconds in total)."""
-    for script, marker in SAMPLE_SCRIPTS:
-        if not (SAMPLE_DIR / marker).is_file():
-            subprocess.run([sys.executable, str(ROOT / "scripts" / script)],
+    """Generate each missing demo file (a few seconds in total).
+
+    ``make_sample_data.py`` takes an output file path and also writes
+    ``sample_terrain.nc`` next to it; ``make_sample_1d_data.py`` takes an output
+    directory and writes two files. Both run in a temporary directory so that
+    only the files listed in DEMO_FILES end up in DEMO_DIR.
+    """
+    DEMO_DIR.mkdir(parents=True, exist_ok=True)
+    for name, script in DEMO_FILES:
+        if (DEMO_DIR / name).is_file():
+            continue
+        with tempfile.TemporaryDirectory() as tmp:
+            arg = os.path.join(tmp, name) if script == "make_sample_data.py" else tmp
+            subprocess.run([sys.executable, str(ROOT / "scripts" / script), arg],
                            check=True, cwd=ROOT)
+            shutil.copyfile(os.path.join(tmp, name), DEMO_DIR / name)
 
 
 def prefetch_natural_earth() -> None:
@@ -93,9 +107,8 @@ def prefetch_natural_earth() -> None:
 
 def main() -> None:
     configure_environment()
-    # The app resolves relative paths (the default sample path, the generator
-    # outputs) against the working directory and imports ``climcanvas`` from
-    # the repository root. Community Cloud starts in the root already; make
+    # The app resolves relative paths against the working directory and imports
+    # ``climcanvas`` from the repository root. Community Cloud starts in the root already; make
     # both explicit for a local ``streamlit run demo/app.py``.
     os.chdir(ROOT)
     if str(ROOT) not in sys.path:

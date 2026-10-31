@@ -15,6 +15,10 @@ manual, FAQ, gallery) are not listed either.
   `CC_MODE=demo`): the server-side session save / restore and the startup preset are hidden, a
   banner points to the installation page, and the export resolution and the number of animation
   frames are capped. Combine it with `allowed_dirs` so that only the sample data can be opened.
+
+### Changed
+
+- The hint shown before any file is loaded no longer mentions the sample-data script.
 - `requirements.txt` pins `pyproj<3.8` and `matplotlib<3.11` for pip installations: PROJ 9.8
   (bundled in pyproj 3.8) shifts coastlines with cartopy 0.25, and matplotlib 3.11 with
   cartopy 0.25 gives map axes a non-finite tight bounding box, so that the preview and any

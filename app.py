@@ -539,7 +539,11 @@ with st.sidebar:
                 if not st.session_state.get("datasets")
                 else t("**ファイルの追加**"))
     if "_new_file_path" not in st.session_state:
-        st.session_state["_new_file_path"] = "data/sample/sample_atmos.nc"
+        # 公開デモはサンプルを data/demo に 2 つだけ置く (demo/app.py) ので、既定のパスも
+        # 許可ディレクトリの先頭にあるサンプルにする (data/sample は許可外になる)
+        st.session_state["_new_file_path"] = (
+            os.path.join(_allowed_dirs[0], "sample_atmos.nc") if _demo and _allowed_dirs
+            else "data/sample/sample_atmos.nc")
 
     # 許可ディレクトリがあれば Streamlit ネイティブのブラウザを出す
     # (リモート運用想定: tkinter ダイアログが動かないヘッドレス環境用)
@@ -583,8 +587,7 @@ with st.sidebar:
 if _demo:
     st.info(t("これは公開デモです。開けるのはサンプルデータだけです。自分のデータで使うには"
               "[インストール]({url}) してください。図・動画・再現スクリプト・セッションは"
-              "「ダウンロード」で手元に保存できます (再現スクリプトの中のファイルパスはデモ側の"
-              "ものなので、手元のパスに書き換えてください)。", url=install_url(current_lang())))
+              "「ダウンロード」で手元に保存できます。", url=install_url(current_lang())))
 
 # --- 編集中のセッションの由来バナー (メインエリア: タイトル直下に常時表示) ---
 # 色はタブと同じ対応: スロット = 青 (アプリを動かすマシン側) /
@@ -604,8 +607,7 @@ if _prov:
                         name=_prov["name"]) + "]")
 
 if not st.session_state.get("datasets"):
-    st.info(t("サイドバーで netCDF ファイルのパスを指定して「追加」を押してください。\n\n"
-            "サンプルデータは `python scripts/make_sample_data.py` で生成できます。"))
+    st.info(t("サイドバーで netCDF ファイルのパスを指定して「追加」を押してください。"))
     st.stop()
 
 # 全データセットを読み込む。エントリの path は 1 ファイルのほかワイルドカード・一覧テキスト

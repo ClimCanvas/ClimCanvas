@@ -1,10 +1,11 @@
 # Public demo (Streamlit Community Cloud)
 
 `demo/app.py` is the entry point of the public demo: it puts the app into the
-demo mode (only the sample data can be opened, no server-side saving, a banner
-with a link to the installation page, capped output resolution and animation
-length), generates the sample data and pre-fetches the Natural Earth
-shapefiles, then runs the real `app.py`. It can also be started locally:
+demo mode (only the files in `data/demo/` can be opened, no server-side saving,
+a banner with a link to the installation page, capped output resolution and
+animation length), generates the two demo files (`sample_atmos.nc` and
+`sample_1d_time.nc`) and pre-fetches the Natural Earth shapefiles, then runs
+the real `app.py`. It can also be started locally:
 
 ```bash
 streamlit run demo/app.py

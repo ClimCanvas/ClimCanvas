@@ -1746,13 +1746,14 @@ def test_demo_entry_point_runs_real_app(monkeypatch):
     at.run()
     assert not at.exception
     assert _os.environ["CC_MODE"] == "demo"
-    assert _os.environ["CC_ALLOWED_DIRS"] == str(root / "data" / "sample")
+    demo_dir = root / "data" / "demo"
+    assert _os.environ["CC_ALLOWED_DIRS"] == str(demo_dir)
     assert any("公開デモ" in i.value for i in at.info)
-    # 既定のパス欄 (data/sample/sample_atmos.nc) のサンプルが開ける
-    sample = root / "data" / "sample" / "sample_atmos.nc"
-    assert sample.is_file(), "ラッパーがサンプルを生成していない"
-    at.text_input(key="_new_file_path").set_value(str(sample))
-    at.run()
+    # デモが開けるのは data/demo の 2 ファイルだけ (ラッパーが生成する)
+    assert sorted(p.name for p in demo_dir.glob("*.nc")) == ["sample_1d_time.nc", "sample_atmos.nc"]
+    # 既定のパス欄がそのサンプルを指し、そのまま「追加」で開ける
+    sample = demo_dir / "sample_atmos.nc"
+    assert at.session_state["_new_file_path"] == str(sample)
     _button(at, "add_file").set_value(True)
     at.run()
     assert not at.exception
