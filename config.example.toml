@@ -28,11 +28,5 @@
 # browser: the session tabs then read "From the server" / "To the server"
 # instead of "From this PC" / "To this PC". Unset = local. The mode is never
 # inferred from the connection.
-# Set to "demo" for a shared public instance (one process used by many
-# anonymous visitors, e.g. Streamlit Community Cloud): in addition to the
-# "remote" wording, the server-side session save / restore and the startup
-# preset are hidden, a banner points to the installation page, and the output
-# resolution and the number of animation frames are capped. Combine it with
-# allowed_dirs so that only the sample data can be opened.
-# Environment variable: CC_MODE ("remote" / "demo"; anything else means local).
+# Environment variable: CC_MODE ("remote"; anything else means local).
 #mode = "remote"
