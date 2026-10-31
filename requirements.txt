@@ -9,7 +9,9 @@
 #     about 0.19 degrees in latitude (cartopy issue #2708, fixed by PR #2653,
 #     which is only in cartopy 0.26). With conda, pin "proj<9.8"
 #     (environment.yml already does). With pip, PROJ is bundled in the pyproj
-#     wheel; if the coastlines look offset, check that PROJ is not 9.8 or newer:
+#     wheel: pyproj 3.8.0 (2026-09) ships PROJ 9.8.1, pyproj 3.7.2 ships
+#     PROJ 9.5.1, hence "pyproj<3.8" below. Lift both pins together with
+#     "cartopy<0.26". To check the PROJ version in use:
 #       python -c "import pyproj; print(pyproj.proj_version_str)"
 xarray
 netCDF4
@@ -17,6 +19,7 @@ numpy
 pandas
 matplotlib
 cartopy<0.26
+pyproj<3.8
 scipy
 cftime
 nc-time-axis

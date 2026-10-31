@@ -45,7 +45,8 @@ from climcanvas.core import render as mc_render
 from climcanvas.core import scriptgen as mc_scriptgen
 from climcanvas.ui.constants import (GL_LINESTYLE_LABELS, KIND_LABELS,
                                      NE_RESOLUTION_LABELS, PROJECTION_LABELS)
-from climcanvas.ui.data_access import (_add_dataset_to_state,
+from climcanvas.ui.data_access import (DEMO_MAX_ANIM_DPI, DEMO_MAX_ANIM_FRAMES,
+                                       DEMO_MAX_DPI, _add_dataset_to_state,
                                        _browse_file_callback, _is_path_allowed,
                                        _load_allowed_dirs, app_mode,
                                        _remove_dataset_from_state,
@@ -61,8 +62,8 @@ from climcanvas.ui.panel_ui import (axis_basic_ui, axis_labels_ui,
                                     line_axis_settings_ui, markers_ui,
                                     panel_selector_cells, selection_widgets,
                                     texts_ui)
-from climcanvas.ui.about import display_version, set_about_menu
-from climcanvas.ui.i18n import LANG_LABELS, t, tr_labels
+from climcanvas.ui.about import display_version, install_url, set_about_menu
+from climcanvas.ui.i18n import LANG_LABELS, current_lang, t, tr_labels
 from climcanvas.ui.notes_ui import format_notes
 from climcanvas.ui.state_io import (STARTUP_PRESET_PATH, _PRESET_ONLY_KEYS,
                                     _delete_startup_preset,
@@ -413,44 +414,53 @@ with st.sidebar:
     # また st.stop() (データ未読み込み) より前に置くことで、起動直後の画面から
     # スロット復元できる (リモート運用の「昨日の続き」がワンクリックになる)
     import json as _json_mod
-    # 運用形態 (明示設定のみ)。青タブの文言 (PC/サーバー) の出し分けに使う
-    _remote = app_mode() == "remote"
+    # 運用形態 (明示設定のみ)。青タブの文言 (PC/サーバー) の出し分けに使う。
+    # demo (公開デモ、docs/public_demo_plan.md) は文言は remote と同じで、サーバー側の
+    # セッション保存・復元と起動時プリセットを出さず、メインにバナーと出力の上限を足す
+    _app_mode = app_mode()
+    _remote = _app_mode != "local"
+    _demo = _app_mode == "demo"
     st.markdown(t("**作業の再開**"))
     with st.expander(t("セッション復元"), expanded=False):
         # 色の対応: 青 = ClimCanvas を動かすマシン側 (local=PC / remote=サーバー)、
         # オレンジ = 手元 PC とのファイル受け渡し (アップロード/ダウンロード)。
         # 保存側のタブと共通
-        _tab_slot, _tab_file = st.tabs([
-            f":blue[{t('サーバーから') if _remote else t('PC から')}]",
-            f":orange[{t('アップロード')}]"])
-        with _tab_slot:
-            st.caption(t("サーバーに保存されているセッションを選んで復元する")
-                       if _remote else
-                       t("この PC に保存されているセッションを選んで復元する"))
-            # ルートの selectbox (session_dirs が複数のとき) + 復元元の行 + 📂 で
-            # 下の階層へ (保存側と同じブラウザ _session_dir_browser)
-            _restore_dir = _session_dir_browser(_load_session_dirs(), "restore")
-            _existing = _list_sessions(_restore_dir)
-            if _existing:
-                _restore_slot = st.selectbox(
-                    t("ファイル名"), _existing, format_func=shorten_label,
-                    key="_session_restore_slot")
-                st.caption(t("選択中: {name}", name=md_plain(_restore_slot)))
-                if st.button(t("復元"), key="_session_restore_btn"):
-                    try:
-                        n = _load_session_from_disk(_restore_dir, _restore_slot)
-                        st.session_state["_session_provenance"] = {
-                            "kind": "slot", "name": _restore_slot}
-                        # 保存側「保存するスロット」に編集中スロットを自動選択
-                        # させる (次 run の widget 描画前に反映される)
-                        st.session_state["_session_ow_pending"] = {
-                            "dir": _restore_dir, "name": _restore_slot}
-                        st.success(t("復元しました ({n} 項目)", n=n))
-                        st.rerun()
-                    except Exception as e:
-                        st.error(t("復元失敗: {e}", e=e))
-            else:
-                st.caption(t("(このディレクトリには保存済みのセッションがありません)"))
+        # 公開デモではサーバー側 (青) のタブを出さず、アップロードだけを素のまま出す
+        if _demo:
+            _tab_slot, _tab_file = None, st.container()
+        else:
+            _tab_slot, _tab_file = st.tabs([
+                f":blue[{t('サーバーから') if _remote else t('PC から')}]",
+                f":orange[{t('アップロード')}]"])
+        if _tab_slot is not None:
+            with _tab_slot:
+                st.caption(t("サーバーに保存されているセッションを選んで復元する")
+                           if _remote else
+                           t("この PC に保存されているセッションを選んで復元する"))
+                # ルートの selectbox (session_dirs が複数のとき) + 復元元の行 + 📂 で
+                # 下の階層へ (保存側と同じブラウザ _session_dir_browser)
+                _restore_dir = _session_dir_browser(_load_session_dirs(), "restore")
+                _existing = _list_sessions(_restore_dir)
+                if _existing:
+                    _restore_slot = st.selectbox(
+                        t("ファイル名"), _existing, format_func=shorten_label,
+                        key="_session_restore_slot")
+                    st.caption(t("選択中: {name}", name=md_plain(_restore_slot)))
+                    if st.button(t("復元"), key="_session_restore_btn"):
+                        try:
+                            n = _load_session_from_disk(_restore_dir, _restore_slot)
+                            st.session_state["_session_provenance"] = {
+                                "kind": "slot", "name": _restore_slot}
+                            # 保存側「保存するスロット」に編集中スロットを自動選択
+                            # させる (次 run の widget 描画前に反映される)
+                            st.session_state["_session_ow_pending"] = {
+                                "dir": _restore_dir, "name": _restore_slot}
+                            st.success(t("復元しました ({n} 項目)", n=n))
+                            st.rerun()
+                        except Exception as e:
+                            st.error(t("復元失敗: {e}", e=e))
+                else:
+                    st.caption(t("(このディレクトリには保存済みのセッションがありません)"))
         with _tab_file:
             st.caption(t("手元 PC に保存したセッションファイルを読み込む"))
             if st.session_state.get("_cfg_applied_id"):
@@ -568,6 +578,13 @@ with st.sidebar:
             else:
                 _add_dataset_to_state(abspath)
                 st.rerun()
+
+# --- 公開デモのバナー (CC_MODE=demo。メインエリアの最上部、由来バナーより前。docs/public_demo_plan.md) ---
+if _demo:
+    st.info(t("これは公開デモです。開けるのはサンプルデータだけです。自分のデータで使うには"
+              "[インストール]({url}) してください。図・動画・再現スクリプト・セッションは"
+              "「ダウンロード」で手元に保存できます (再現スクリプトの中のファイルパスはデモ側の"
+              "ものなので、手元のパスに書き換えてください)。", url=install_url(current_lang())))
 
 # --- 編集中のセッションの由来バナー (メインエリア: タイトル直下に常時表示) ---
 # 色はタブと同じ対応: スロット = 青 (アプリを動かすマシン側) /
@@ -795,97 +812,102 @@ with st.sidebar:
                    "復元は「データ・セッション読み込み」→「セッション復元」から"))
         session_state_json = _serialize_session()
         # 復元側「作業の再開 → セッション復元」と同じ順・同じ色のタブ構造
-        _save_tab_slot, _save_tab_file = st.tabs([
-            f":blue[{t('サーバーへ') if _remote else t('PC へ')}]",
-            f":orange[{t('ダウンロード')}]"])
-        with _save_tab_slot:
-            # 名前を付けて保存した直後の成功メッセージ (st.rerun() をまたいで表示)
-            _saved_msg = st.session_state.pop("_session_saved_msg", None)
-            if _saved_msg:
-                st.success(t("保存しました ({n} 項目): {path}",
-                             n=_saved_msg[0], path=_saved_msg[1]))
-            st.caption(t("サーバー側に保存する (手元 PC には残らない)。"
-                         "`session_dirs` から保存先を選び、名前を付けて保存")
-                       if _remote else
-                       t("この PC の保存領域 (`session_dirs`) に、名前を付けて保存"))
-            _session_dirs = _load_session_dirs()
-            # 復元・名前を付けて保存の直後は、編集中のスロットを
-            # 「保存するスロット」に自動選択する (widget 描画前にここで反映。
-            # ハンドラからの直接代入は描画順の制約があるため pending 経由)。
-            # ディレクトリはサブディレクトリでもよく、属するルートを selectbox に、
-            # ディレクトリ自身をブラウザの現在地に入れる (ルートの外なら触らない)
-            _ow_pending = st.session_state.pop("_session_ow_pending", None)
-            if _ow_pending:
-                _ow_root = root_of(_ow_pending["dir"], _session_dirs)
-                if _ow_root is not None:
-                    st.session_state["_session_save_dir"] = _ow_root
-                    st.session_state["_sessdir_save_cur"] = _ow_pending["dir"]
-                    st.session_state["_sessdir_save_last_root"] = _ow_root
-                st.session_state["_session_overwrite_slot"] = _ow_pending["name"]
-            # ルートの selectbox (session_dirs が複数のとき) + 保存先の行 + 📂 で
-            # 下の階層へ + 新しいサブディレクトリ
-            _session_dir = _session_dir_browser(
-                _session_dirs, "save",
-                root_help=t("`~/.climcanvas/config.toml` の `session_dirs` に追加候補を書ける。"
-                            "その下の階層は 📂 で辿り、「新しいサブディレクトリ」で作れる"),
-                allow_mkdir=True)
-            # 既存スロットへの上書き (スロット選択 + 上書きボタン)
-            _existing_save = _list_sessions(_session_dir)
-            # 選択値が一覧に無ければ既定へ戻す (dir 切替・外部削除への防御)
-            if st.session_state.get("_session_overwrite_slot") not in _existing_save:
-                st.session_state.pop("_session_overwrite_slot", None)
-            if _existing_save:
-                _c_ow_slot, _c_ow_btn = st.columns(
+        # 公開デモではサーバー側 (青) のタブを出さず、ダウンロードだけを素のまま出す
+        if _demo:
+            _save_tab_slot, _save_tab_file = None, st.container()
+        else:
+            _save_tab_slot, _save_tab_file = st.tabs([
+                f":blue[{t('サーバーへ') if _remote else t('PC へ')}]",
+                f":orange[{t('ダウンロード')}]"])
+        if _save_tab_slot is not None:
+            with _save_tab_slot:
+                # 名前を付けて保存した直後の成功メッセージ (st.rerun() をまたいで表示)
+                _saved_msg = st.session_state.pop("_session_saved_msg", None)
+                if _saved_msg:
+                    st.success(t("保存しました ({n} 項目): {path}",
+                                 n=_saved_msg[0], path=_saved_msg[1]))
+                st.caption(t("サーバー側に保存する (手元 PC には残らない)。"
+                             "`session_dirs` から保存先を選び、名前を付けて保存")
+                           if _remote else
+                           t("この PC の保存領域 (`session_dirs`) に、名前を付けて保存"))
+                _session_dirs = _load_session_dirs()
+                # 復元・名前を付けて保存の直後は、編集中のスロットを
+                # 「保存するスロット」に自動選択する (widget 描画前にここで反映。
+                # ハンドラからの直接代入は描画順の制約があるため pending 経由)。
+                # ディレクトリはサブディレクトリでもよく、属するルートを selectbox に、
+                # ディレクトリ自身をブラウザの現在地に入れる (ルートの外なら触らない)
+                _ow_pending = st.session_state.pop("_session_ow_pending", None)
+                if _ow_pending:
+                    _ow_root = root_of(_ow_pending["dir"], _session_dirs)
+                    if _ow_root is not None:
+                        st.session_state["_session_save_dir"] = _ow_root
+                        st.session_state["_sessdir_save_cur"] = _ow_pending["dir"]
+                        st.session_state["_sessdir_save_last_root"] = _ow_root
+                    st.session_state["_session_overwrite_slot"] = _ow_pending["name"]
+                # ルートの selectbox (session_dirs が複数のとき) + 保存先の行 + 📂 で
+                # 下の階層へ + 新しいサブディレクトリ
+                _session_dir = _session_dir_browser(
+                    _session_dirs, "save",
+                    root_help=t("`~/.climcanvas/config.toml` の `session_dirs` に追加候補を書ける。"
+                                "その下の階層は 📂 で辿り、「新しいサブディレクトリ」で作れる"),
+                    allow_mkdir=True)
+                # 既存スロットへの上書き (スロット選択 + 上書きボタン)
+                _existing_save = _list_sessions(_session_dir)
+                # 選択値が一覧に無ければ既定へ戻す (dir 切替・外部削除への防御)
+                if st.session_state.get("_session_overwrite_slot") not in _existing_save:
+                    st.session_state.pop("_session_overwrite_slot", None)
+                if _existing_save:
+                    _c_ow_slot, _c_ow_btn = st.columns(
+                        [3, 1], vertical_alignment="bottom")
+                    # 3/4 幅の列に入るので短縮幅も狭める (全幅は既定 24)
+                    _ow_slot = _c_ow_slot.selectbox(
+                        t("上書きするファイル名"), _existing_save,
+                        format_func=lambda v: shorten_label(v, 18),
+                        key="_session_overwrite_slot")
+                    st.caption(t("選択中: {name}", name=md_plain(_ow_slot)))
+                    if _c_ow_btn.button(t("上書き"), key="_session_overwrite_btn",
+                                        help=t("選択したファイルに現在のセッションを"
+                                               "上書き保存する")):
+                        try:
+                            n = _save_session_to_disk(_session_dir, _ow_slot)
+                            # メインの由来バナーはこのハンドラより前に描画済みの
+                            # ため st.rerun() で即反映し、成功メッセージは
+                            # _session_saved_msg 経由で持ち越す
+                            st.session_state["_session_provenance"] = {
+                                "kind": "slot", "name": _ow_slot}
+                            st.session_state["_session_saved_msg"] = (
+                                n, str(_session_path(_session_dir, _ow_slot)))
+                            st.rerun()
+                        except Exception as e:
+                            st.error(t("保存失敗: {e}", e=e))
+                # 新しいファイル名で保存
+                _c_save_name, _c_save_btn = st.columns(
                     [3, 1], vertical_alignment="bottom")
-                # 3/4 幅の列に入るので短縮幅も狭める (全幅は既定 24)
-                _ow_slot = _c_ow_slot.selectbox(
-                    t("上書きするファイル名"), _existing_save,
-                    format_func=lambda v: shorten_label(v, 18),
-                    key="_session_overwrite_slot")
-                st.caption(t("選択中: {name}", name=md_plain(_ow_slot)))
-                if _c_ow_btn.button(t("上書き"), key="_session_overwrite_btn",
-                                    help=t("選択したファイルに現在のセッションを"
-                                           "上書き保存する")):
+                _session_name = _c_save_name.text_input(
+                    t("名前 (拡張子 .json は自動で付きます)"), value="",
+                    placeholder=t("例: el-nino-2015"), key="_session_save_name")
+                # 名前はスロット名 (拡張子なし)。`test.json` と書かれても `.json` を外して
+                # `test.json.json` にならないようにし、保存されるファイル名を欄の下に示す
+                _slot_name = normalize_session_name(_session_name)
+                if _slot_name:
+                    st.caption(t("保存されるファイル: {name}",
+                                 name=md_plain(_session_path(_session_dir, _slot_name).name)))
+                if _c_save_btn.button(t("保存"), key="_session_save_btn",
+                                        disabled=not _slot_name):
                     try:
-                        n = _save_session_to_disk(_session_dir, _ow_slot)
-                        # メインの由来バナーはこのハンドラより前に描画済みの
-                        # ため st.rerun() で即反映し、成功メッセージは
-                        # _session_saved_msg 経由で持ち越す
+                        n = _save_session_to_disk(_session_dir, _slot_name)
+                        # 「作業の再開」のセッション一覧とメインの由来
+                        # バナーはこのハンドラより前に描画済みのため st.rerun() で
+                        # 即反映し、成功メッセージは _session_saved_msg 経由で持ち越す
                         st.session_state["_session_provenance"] = {
-                            "kind": "slot", "name": _ow_slot}
+                            "kind": "slot", "name": _slot_name}
+                        st.session_state["_session_ow_pending"] = {
+                            "dir": _session_dir, "name": _slot_name}
                         st.session_state["_session_saved_msg"] = (
-                            n, str(_session_path(_session_dir, _ow_slot)))
+                            n, str(_session_path(_session_dir, _slot_name)))
                         st.rerun()
                     except Exception as e:
                         st.error(t("保存失敗: {e}", e=e))
-            # 新しいファイル名で保存
-            _c_save_name, _c_save_btn = st.columns(
-                [3, 1], vertical_alignment="bottom")
-            _session_name = _c_save_name.text_input(
-                t("名前 (拡張子 .json は自動で付きます)"), value="",
-                placeholder=t("例: el-nino-2015"), key="_session_save_name")
-            # 名前はスロット名 (拡張子なし)。`test.json` と書かれても `.json` を外して
-            # `test.json.json` にならないようにし、保存されるファイル名を欄の下に示す
-            _slot_name = normalize_session_name(_session_name)
-            if _slot_name:
-                st.caption(t("保存されるファイル: {name}",
-                             name=md_plain(_session_path(_session_dir, _slot_name).name)))
-            if _c_save_btn.button(t("保存"), key="_session_save_btn",
-                                    disabled=not _slot_name):
-                try:
-                    n = _save_session_to_disk(_session_dir, _slot_name)
-                    # 「作業の再開」のセッション一覧とメインの由来
-                    # バナーはこのハンドラより前に描画済みのため st.rerun() で
-                    # 即反映し、成功メッセージは _session_saved_msg 経由で持ち越す
-                    st.session_state["_session_provenance"] = {
-                        "kind": "slot", "name": _slot_name}
-                    st.session_state["_session_ow_pending"] = {
-                        "dir": _session_dir, "name": _slot_name}
-                    st.session_state["_session_saved_msg"] = (
-                        n, str(_session_path(_session_dir, _slot_name)))
-                    st.rerun()
-                except Exception as e:
-                    st.error(t("保存失敗: {e}", e=e))
         with _save_tab_file:
             st.caption(t("手元 PC へダウンロード保存する"))
             st.download_button(
@@ -895,20 +917,22 @@ with st.sidebar:
                 key="session_dl",
                 help=t("保存先は手元ブラウザのダウンロード設定に従う。ファイル名は自由 "
                        "(保存時に付けるか、保存後に変えてよい)"))
-    with st.expander(t("プリセット"), expanded=False):
-        st.caption(t(
-            "データに依存しない好みの設定値 "
-            "(グリッド・ティック・線種・カラーマップ・カラーバー など) を "
-            "`{path}` に保存。アプリ起動時に自動適用される。",
-            path=STARTUP_PRESET_PATH))
-        _has_startup = STARTUP_PRESET_PATH.is_file()
-        st.caption(t("✓ 設定済み") if _has_startup else t("(未設定)"))
-        if st.button(t("プリセットの保存"), key="save_startup_preset"):
-            n = _save_startup_preset()
-            st.success(t("保存しました ({n} 項目): {path}", n=n, path=STARTUP_PRESET_PATH))
-        if _has_startup and st.button(t("起動時プリセットを削除"), key="delete_startup_preset"):
-            _delete_startup_preset()
-            st.success(t("削除しました"))
+    # 公開デモでは起動時プリセット (コンテナ内の 1 ファイルを全員で共有してしまう) を出さない
+    if not _demo:
+        with st.expander(t("プリセット"), expanded=False):
+            st.caption(t(
+                "データに依存しない好みの設定値 "
+                "(グリッド・ティック・線種・カラーマップ・カラーバー など) を "
+                "`{path}` に保存。アプリ起動時に自動適用される。",
+                path=STARTUP_PRESET_PATH))
+            _has_startup = STARTUP_PRESET_PATH.is_file()
+            st.caption(t("✓ 設定済み") if _has_startup else t("(未設定)"))
+            if st.button(t("プリセットの保存"), key="save_startup_preset"):
+                n = _save_startup_preset()
+                st.success(t("保存しました ({n} 項目): {path}", n=n, path=STARTUP_PRESET_PATH))
+            if _has_startup and st.button(t("起動時プリセットを削除"), key="delete_startup_preset"):
+                _delete_startup_preset()
+                st.success(t("削除しました"))
 
 
 # --- パネル構成・図全体の書式 (第6段階: 複数パネル) ---
@@ -3363,6 +3387,20 @@ except Exception as exc:
     st.stop()
 
 anim_req = st.session_state.pop("_anim_request", None)
+# 公開デモの上限 (docs/public_demo_plan.md 要決定 4): フレーム数を超える要求は止め、ファイル生成の
+# フレーム解像度は丸める。再生・生成・スクリプトの分岐より前に 1 か所で検査する。要求タプルは
+# (種別, time_values, fps, fmt, centers, dpi, frames_per_time) (panel_ui.animation_controls_ui)
+if _demo and anim_req and anim_req[0] in ("play", "file"):
+    _n_req = mc_render.animation_frame_count(anim_req[1], anim_req[4], anim_req[6])
+    if _n_req > DEMO_MAX_ANIM_FRAMES:
+        st.error(t("公開デモではアニメーションは {max} フレームまでです (今の指定は {n} フレーム)。"
+                   "時刻の範囲を狭めるか、インストールして手元で実行してください。",
+                   max=DEMO_MAX_ANIM_FRAMES, n=_n_req))
+        anim_req = None
+    elif anim_req[0] == "file" and anim_req[5] > DEMO_MAX_ANIM_DPI:
+        st.caption(t("公開デモでは動画のフレーム解像度は {max} dpi までで生成します。",
+                     max=DEMO_MAX_ANIM_DPI))
+        anim_req = (*anim_req[:5], DEMO_MAX_ANIM_DPI, anim_req[6])
 # 時刻を持つ全レイヤーの時刻を固定したパネルは時刻送りで変わらない (時刻ラベルだけ進む)。
 # 警告だけ出して生成は止めない (docs/layer_time_fixed_plan.md 決定 3 = 案 A)
 if anim_req and anim_req[1] is not None and roles.get("time"):
@@ -3529,7 +3567,12 @@ with col_png:
         out_transparent = False
     out_tight = st.checkbox(t('余白を切り詰める (bbox_inches="tight")'), value=True,
                             key="out_tight")
-    _save_kwargs = {"format": out_ext, "dpi": int(dpi)}
+    _dpi_out = int(dpi)
+    if _demo and _dpi_out > DEMO_MAX_DPI:  # 公開デモの上限 (docs/public_demo_plan.md 要決定 4)
+        st.caption(t("公開デモでは画像は {max} dpi までで出力します (再現スクリプトには選んだ値が入ります)。",
+                     max=DEMO_MAX_DPI))
+        _dpi_out = DEMO_MAX_DPI
+    _save_kwargs = {"format": out_ext, "dpi": _dpi_out}
     if out_tight:
         _save_kwargs["bbox_inches"] = "tight"
     if out_transparent:

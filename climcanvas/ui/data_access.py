@@ -169,22 +169,37 @@ def _load_allowed_dirs() -> list[str]:
     return expand_user_paths(read_user_config().get("allowed_dirs") or [])
 
 
+# 運用形態の値。"demo" は公開デモ (1 つのコンテナを不特定多数で共有する。計画 =
+# docs/public_demo_plan.md): 文言は remote と同じ「サーバー」で、そのうえで UI から
+# サーバー側のセッション保存・復元と起動時プリセットを消し、バナーと出力の上限を足す
+APP_MODES = ("local", "remote", "demo")
+
+# 公開デモだけの上限 (app.py が demo のときに適用する。render / scriptgen は触らない)
+DEMO_MAX_DPI = 300          # 画像出力の dpi (選択肢 150 / 300 / 600 のうち 600 を 300 に丸める)
+DEMO_MAX_ANIM_DPI = 200     # GIF / MP4 のフレーム解像度 (UI の上限は 400)
+DEMO_MAX_ANIM_FRAMES = 40   # アニメーションのフレーム数 (再生・ファイル生成とも)
+
+
 def app_mode() -> str:
-    """アプリの運用形態 "local" / "remote" を返す。**明示設定のみ**で判定する
+    """アプリの運用形態 "local" / "remote" / "demo" を返す。**明示設定のみ**で判定する
     (接続元 IP 等からの推定はしない — SSH トンネル構成では原理的に判別できないため)。
 
     優先順:
-      1. 環境変数 CC_MODE ("remote" / それ以外は local。設定されていれば空でも優先 —
-         テストの隔離にも使う)
-      2. ~/.climcanvas/config.toml の mode = "remote"
+      1. 環境変数 CC_MODE ("remote" / "demo" / それ以外は local。設定されていれば空でも
+         優先 — テストの隔離にも使う)
+      2. ~/.climcanvas/config.toml の mode = "remote" / "demo"
       3. どちらも無ければ "local"
     """
     raw = os.environ.get("CC_MODE")
-    if raw is not None:
-        return "remote" if raw.strip().lower() == "remote" else "local"
-    if str(read_user_config().get("mode", "")).strip().lower() == "remote":
-        return "remote"
-    return "local"
+    if raw is None:
+        raw = str(read_user_config().get("mode", ""))
+    value = raw.strip().lower()
+    return value if value in APP_MODES else "local"
+
+
+def is_demo() -> bool:
+    """公開デモ運用 (CC_MODE=demo / config の mode = "demo") か。"""
+    return app_mode() == "demo"
 
 
 def _is_path_allowed(path: str, allowed_dirs: list[str]) -> bool:

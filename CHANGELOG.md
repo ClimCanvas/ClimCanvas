@@ -9,6 +9,15 @@ manual, FAQ, gallery) are not listed either.
 
 ## Unreleased
 
+### Added
+
+- A demo mode for a shared public instance (`mode = "demo"` in the configuration file or
+  `CC_MODE=demo`): the server-side session save / restore and the startup preset are hidden, a
+  banner points to the installation page, and the export resolution and the number of animation
+  frames are capped. Combine it with `allowed_dirs` so that only the sample data can be opened.
+- `requirements.txt` pins `pyproj<3.8` so that a pip installation does not pick up PROJ 9.8,
+  which shifts coastlines with cartopy 0.25 (see the comments in the file).
+
 ## 1.04.2 — 2026-10-26
 
 ### Added

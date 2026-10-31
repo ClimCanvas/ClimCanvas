@@ -60,6 +60,11 @@ def site_url(lang: str) -> str:
     return SITE_URL + SITE_LANG_DIRS.get(lang, "en/")
 
 
+def install_url(lang: str) -> str:
+    """UI 言語に応じたサイトのインストールページ (公開デモのバナーが指す。docs/public_demo_plan.md)。"""
+    return site_url(lang) + "install.html"
+
+
 def site_label(lang: str) -> str:
     """About に表示するサイトのリンク文字列 (scheme と末尾の / を除いた URL)。"""
     return site_url(lang).removeprefix("https://").rstrip("/")

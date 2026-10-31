@@ -1,0 +1,7 @@
+# Python dependencies of the public demo (Streamlit Community Cloud).
+#
+# Community Cloud looks for a dependency file in the directory of the main
+# file first, so this file makes the deployment use pip (uv) with the root
+# requirements.txt instead of the root environment.yml (conda), which it would
+# otherwise prefer. Keep the list itself in ../requirements.txt.
+-r ../requirements.txt

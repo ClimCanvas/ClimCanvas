@@ -1677,3 +1677,84 @@ def test_session_dir_guard_rejects_outside(tmp_path, monkeypatch):
     (root / "file.json").write_text("{}", encoding="utf-8")
     assert list_subdirs(str(root)) == ["in"]
     assert list_subdirs(str(root / "nope")) == []
+
+
+# --- 公開デモ運用 (CC_MODE=demo、docs/public_demo_plan.md Step 1) ---
+# サンプルだけ開ける・サーバー側の保存/復元と起動時プリセットが消える・バナーが出る・出力の上限
+
+def test_demo_mode_hides_server_side_saving_and_shows_banner(sample_path, tmp_path, monkeypatch):
+    import os as _os
+    monkeypatch.setenv("CC_MODE", "demo")
+    monkeypatch.setenv("CC_ALLOWED_DIRS", _os.path.dirname(sample_path))
+    at = _load_app(sample_path)
+    # バナー (メインエリア)
+    assert any("公開デモ" in i.value and "install.html" in i.value for i in at.info)
+    # サーバー側のセッション保存・復元と起動時プリセットのボタンが無い
+    keys = {b.key for b in at.get("button")}
+    for k in ("_session_save_btn", "_session_overwrite_btn", "_session_restore_btn",
+              "save_startup_preset", "delete_startup_preset"):
+        assert k not in keys, k
+    # 手元 PC とのやり取り (セッションのダウンロード) は残る。download_button は AppTest の
+    # 要素ツリーに専用クラスが無く UnknownElement (type だけ) として入るので type で探す
+    assert any(getattr(e, "type", None) == "download_button" for e in at.sidebar), \
+        "セッションのダウンロードボタンが無い"
+    # 許可ディレクトリ (サンプル) の外は開けない
+    outside = tmp_path / "outside.nc"
+    outside.write_bytes(b"")
+    at.text_input(key="_new_file_path").set_value(str(outside))
+    at.run()
+    _button(at, "add_file").set_value(True)
+    at.run()
+    assert any("許可ディレクトリの外" in e.value for e in at.error)
+
+
+def test_demo_mode_caps_output_dpi(sample_path, monkeypatch):
+    import os as _os
+    monkeypatch.setenv("CC_MODE", "demo")
+    monkeypatch.setenv("CC_ALLOWED_DIRS", _os.path.dirname(sample_path))
+    at = _load_app(sample_path)
+    at.selectbox(key="png_dpi").set_value(600)
+    at.run()
+    assert not at.exception
+    assert any("300 dpi" in c.value for c in at.caption), "dpi の上限の注記が出ない"
+
+
+def test_local_mode_has_no_demo_banner_or_cap(sample_path):
+    at = _load_app(sample_path)
+    at.selectbox(key="png_dpi").set_value(600)
+    at.run()
+    assert not any("公開デモ" in i.value for i in at.info)
+    assert not any("300 dpi" in c.value for c in at.caption)
+    keys = {b.key for b in at.get("button")}
+    assert {"_session_save_btn", "save_startup_preset"} <= keys
+
+
+def test_demo_entry_point_runs_real_app(monkeypatch):
+    """demo/app.py (ラッパー) が環境変数を設定して本体を実行し、サンプルだけが開ける。
+
+    ラッパーは os.environ を書き換えるので、monkeypatch で元の値を記録して後片付けする
+    (conftest が CC_MODE="" / CC_ALLOWED_DIRS="" を全テストの前提にしている)。
+    """
+    import os as _os
+    root = Path(__file__).resolve().parents[1]
+    for name in ("CC_MODE", "CC_ALLOWED_DIRS"):
+        monkeypatch.setenv(name, "")
+    for name in ("CC_SESSION_DIRS", "CLIMCANVAS_PRESET_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(root)
+    at = AppTest.from_file(str(root / "demo" / "app.py"), default_timeout=120)
+    at.run()
+    assert not at.exception
+    assert _os.environ["CC_MODE"] == "demo"
+    assert _os.environ["CC_ALLOWED_DIRS"] == str(root / "data" / "sample")
+    assert any("公開デモ" in i.value for i in at.info)
+    # 既定のパス欄 (data/sample/sample_atmos.nc) のサンプルが開ける
+    sample = root / "data" / "sample" / "sample_atmos.nc"
+    assert sample.is_file(), "ラッパーがサンプルを生成していない"
+    at.text_input(key="_new_file_path").set_value(str(sample))
+    at.run()
+    _button(at, "add_file").set_value(True)
+    at.run()
+    assert not at.exception
+    assert not at.error
+    assert at.session_state["datasets"][0]["path"] == str(sample)
