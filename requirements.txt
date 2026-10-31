@@ -13,11 +13,16 @@
 #     PROJ 9.5.1, hence "pyproj<3.8" below. Lift both pins together with
 #     "cartopy<0.26". To check the PROJ version in use:
 #       python -c "import pyproj; print(pyproj.proj_version_str)"
+#   - cartopy 0.25 with matplotlib 3.11 gives the map axes (title, tight bounding
+#     box) non-finite positions, so a figure saved with bbox_inches="tight"
+#     (the app preview, st.pyplot) shows only the colorbar. Hence
+#     "matplotlib<3.11" below (environment.yml pins 3.10.8). Lift together
+#     with "cartopy<0.26".
 xarray
 netCDF4
 numpy
 pandas
-matplotlib
+matplotlib<3.11
 cartopy<0.26
 pyproj<3.8
 scipy
