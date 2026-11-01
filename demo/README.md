@@ -3,7 +3,8 @@
 `demo/app.py` is the entry point of the public demo: it puts the app into the
 demo mode (only the files in `data/demo/` can be opened, no server-side saving,
 a banner with a link to the installation page, capped output resolution and
-animation length), generates the two demo files (`sample_atmos.nc` and
+animation length), starts the interface in English (visitors can switch it in
+the sidebar), generates the two demo files (`sample_atmos.nc` and
 `sample_1d_time.nc`) and pre-fetches the Natural Earth shapefiles, then runs
 the real `app.py`. It can also be started locally:
 
@@ -31,6 +32,11 @@ Notes:
   to prevent this (see below).
 - The demo keeps nothing on the server: figures, animations, scripts and
   sessions are downloaded to the visitor's PC.
+- Search engines and the share preview of Community Cloud use the first screen of
+  the app (there is no setting for keywords or a description), so in the demo mode
+  the line under the title says what the app does and, before a file is loaded,
+  `demo/example_figure.png` (a copy of a figure from the gallery of the website:
+  JRA-3Q 500 hPa height climatology, DJF / JJA) is shown as an example.
 
 ## Keeping the demo awake
 

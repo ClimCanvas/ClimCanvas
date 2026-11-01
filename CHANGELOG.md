@@ -9,6 +9,20 @@ manual, FAQ, gallery) are not listed either.
 
 ## Unreleased
 
+## 1.05.1 — 2026-11-01
+
+### Added
+
+- `lang` in `~/.climcanvas/config.toml` (environment variable `CC_LANG`): the language the
+  interface starts in (`ja`, `en`, `zh_CN` or `ko`). The sidebar selector still switches it, and a
+  language saved in the startup preset takes precedence.
+- Before a file is loaded, the public demo shows an example figure from the gallery of the website.
+
+### Changed
+
+- The public demo starts in English, and the line under the title describes what the app does
+  (search engines take their description of the page from the content).
+
 ## 1.05 — 2026-10-31
 
 ### Added

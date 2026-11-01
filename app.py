@@ -48,7 +48,7 @@ from climcanvas.ui.constants import (GL_LINESTYLE_LABELS, KIND_LABELS,
 from climcanvas.ui.data_access import (DEMO_MAX_ANIM_DPI, DEMO_MAX_ANIM_FRAMES,
                                        DEMO_MAX_DPI, _add_dataset_to_state,
                                        _browse_file_callback, _is_path_allowed,
-                                       _load_allowed_dirs, app_mode,
+                                       _load_allowed_dirs, app_mode, default_ui_lang,
                                        _remove_dataset_from_state,
                                        browse_into_callback,
                                        detect_grid_projection_cached,
@@ -62,7 +62,7 @@ from climcanvas.ui.panel_ui import (axis_basic_ui, axis_labels_ui,
                                     line_axis_settings_ui, markers_ui,
                                     panel_selector_cells, selection_widgets,
                                     texts_ui)
-from climcanvas.ui.about import display_version, install_url, set_about_menu
+from climcanvas.ui.about import display_version, install_url, set_about_menu, site_url
 from climcanvas.ui.i18n import LANG_LABELS, current_lang, t, tr_labels
 from climcanvas.ui.notes_ui import format_notes
 from climcanvas.ui.state_io import (STARTUP_PRESET_PATH, _PRESET_ONLY_KEYS,
@@ -89,14 +89,35 @@ from climcanvas.ui.widgets import (available_font_families,
 
 # --- メイン ---
 
+# 起動時の UI 言語 (環境変数 CC_LANG / config.toml の lang。無ければ日本語)。最初の t()
+# (タイトル下の一行) と selectbox (key="ui_lang") より前に入れる。後に置くと初回の run だけ
+# タイトル下が日本語になる (公開デモの最初の画面 = 検索エンジンが読む画面)。起動時プリセットに
+# ui_lang が保存されていれば、サイドバーの _load_startup_preset_once() が上書きする
+# (利用者の明示的な保存を優先)
+if "ui_lang" not in st.session_state:
+    st.session_state["ui_lang"] = default_ui_lang()
+
 # st.title 相当の h1 を translate="no" 付きの生 HTML で描く。ブラウザの自動翻訳
 # (Chrome の「このページを翻訳」) がアプリ名を音写 (クライムキャンバス) するのを
 # 防ぐ。class="notranslate" は Google 翻訳向けの同義指定 (st.title は HTML 属性を
 # 付けられないため markdown で代替。見た目は markdown h1 = st.title と同一)
 st.markdown('<h1 translate="no" class="notranslate">ClimCanvas</h1>',
             unsafe_allow_html=True)
-# 表記はリリースタグに合わせ major.minor (display_version。About の版と同じ)
-st.caption(t("netCDF 大気・海洋データ可視化 — ver {ver}", ver=display_version()))
+# 運用形態 (明示設定のみ。docs/public_demo_plan.md)。remote は青タブの文言 (PC/サーバー) の
+# 出し分け、demo (公開デモ) は文言は remote と同じで、サーバー側のセッション保存・復元と起動時
+# プリセットを出さず、メインにバナーと出力の上限を足す
+_app_mode = app_mode()
+_remote = _app_mode != "local"
+_demo = _app_mode == "demo"
+# 表記はリリースタグに合わせ major.minor (display_version。About の版と同じ)。
+# 公開デモはこの一行が検索エンジンの説明文に拾われやすい (Community Cloud は description を
+# 設定できず、本文から推定する) ので、何ができるかと主な語を入れた長い版にする
+if _demo:
+    st.caption(t("netCDF の気候データ (大気・海洋) を対話的に可視化 — 水平断面図・鉛直断面図・時系列などを描き、"
+                 "図を画像 (PNG / SVG / PDF) や動画 (MP4 / GIF) として保存できます。再現用の Python スクリプトも出力。"
+                 "公開デモ (ver {ver}、サンプルデータのみ)", ver=display_version()))
+else:
+    st.caption(t("netCDF 大気・海洋データ可視化 — ver {ver}", ver=display_version()))
 
 # --- widget 状態の保持 (stale-widget 掃除対策) ---
 # パネル切替・追加・複製などのボタンは st.rerun() でスクリプトを途中終了させる。
@@ -414,12 +435,7 @@ with st.sidebar:
     # また st.stop() (データ未読み込み) より前に置くことで、起動直後の画面から
     # スロット復元できる (リモート運用の「昨日の続き」がワンクリックになる)
     import json as _json_mod
-    # 運用形態 (明示設定のみ)。青タブの文言 (PC/サーバー) の出し分けに使う。
-    # demo (公開デモ、docs/public_demo_plan.md) は文言は remote と同じで、サーバー側の
-    # セッション保存・復元と起動時プリセットを出さず、メインにバナーと出力の上限を足す
-    _app_mode = app_mode()
-    _remote = _app_mode != "local"
-    _demo = _app_mode == "demo"
+    # 運用形態 _app_mode / _remote / _demo はタイトル直下で決めてある
     st.markdown(t("**作業の再開**"))
     with st.expander(t("セッション復元"), expanded=False):
         # 色の対応: 青 = ClimCanvas を動かすマシン側 (local=PC / remote=サーバー)、
@@ -608,6 +624,17 @@ if _prov:
 
 if not st.session_state.get("datasets"):
     st.info(t("サイドバーで netCDF ファイルのパスを指定して「追加」を押してください。"))
+    if _demo:
+        # 公開デモの最初の画面 (データ未読み込み) に、サイトのギャラリーの図を 1 枚見本として出す。
+        # 検索エンジンと Community Cloud のプレビュー画像 (1 日 1 回のスクリーンショット) が
+        # この画面を使うため。ファイルは web/site/samples/map/contour-npolar-z500-djf-jja.png の写し
+        # (docs/public_demo_plan.md「検索エンジンでの見え方」)
+        st.image(os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo", "example_figure.png"),
+                 caption=t("ClimCanvas で描いた例: 冬 (DJF) と夏 (JJA) の 500 hPa 高度の気候値 (JRA-3Q、"
+                           "1979〜2024 年) を、北極を中心にした極ステレオ投影に等値線で描画。このデモで開ける"
+                           "サンプルデータは合成データですが、同じ種類の図が描けます。"))
+        st.markdown(t("ほかの例は Web サイトの[ギャラリー]({url})にあります。",
+                      url=site_url(current_lang()) + "gallery.html"))
     st.stop()
 
 # 全データセットを読み込む。エントリの path は 1 ファイルのほかワイルドカード・一覧テキスト

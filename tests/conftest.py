@@ -22,6 +22,7 @@ import tempfile as _tempfile
 
 _os.environ["CC_ALLOWED_DIRS"] = ""
 _os.environ["CC_MODE"] = ""  # 常に local 扱い (config.toml の mode を無視)
+_os.environ["CC_LANG"] = ""  # 起動時の UI 言語は既定の日本語 (config.toml の lang を無視)
 _isolated = _tempfile.mkdtemp(prefix="cc_test_climcanvas_")
 _os.environ["CC_SESSION_DIRS"] = str(Path(_isolated) / "sessions")
 _os.environ["CLIMCANVAS_PRESET_PATH"] = str(Path(_isolated) / "preset.json")

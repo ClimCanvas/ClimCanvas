@@ -327,3 +327,54 @@ def test_language_not_saved_into_wip(sample_path, tmp_path, monkeypatch):
     at2.run()
     assert not at2.exception
     assert at2.session_state["ui_lang"] == "ja"
+
+
+def test_default_ui_lang_resolution(monkeypatch):
+    """起動時の UI 言語: CC_LANG (設定されていれば空でも優先) → config.toml の lang → ja。不正値は ja。"""
+    from climcanvas.ui import data_access
+
+    monkeypatch.setenv("CC_LANG", "en")
+    assert data_access.default_ui_lang() == "en"
+    monkeypatch.setenv("CC_LANG", " ko ")
+    assert data_access.default_ui_lang() == "ko"
+    monkeypatch.setenv("CC_LANG", "fr")
+    assert data_access.default_ui_lang() == "ja"
+    monkeypatch.setattr(data_access, "read_user_config", lambda: {"lang": "zh_CN"})
+    monkeypatch.setenv("CC_LANG", "")
+    assert data_access.default_ui_lang() == "ja", "空の CC_LANG は config.toml を無視して既定"
+    monkeypatch.delenv("CC_LANG")
+    assert data_access.default_ui_lang() == "zh_CN"
+    monkeypatch.setattr(data_access, "read_user_config", lambda: {"lang": "xx"})
+    assert data_access.default_ui_lang() == "ja"
+    monkeypatch.setattr(data_access, "read_user_config", lambda: {})
+    assert data_access.default_ui_lang() == "ja"
+
+
+def test_cc_lang_sets_the_startup_language(sample_path, monkeypatch):
+    """CC_LANG=en で起動すると selectbox の初期値が英語になり (公開デモの既定)、切り替えもできる。"""
+    monkeypatch.setenv("CC_LANG", "en")
+    at = _load_app(sample_path)
+    assert at.session_state["ui_lang"] == "en"
+    assert at.selectbox(key="ui_lang").value == "en"
+    at.selectbox(key="ui_lang").set_value("ja")
+    at.run()
+    assert not at.exception
+    assert at.session_state["ui_lang"] == "ja"
+
+
+def test_startup_preset_language_overrides_cc_lang(monkeypatch):
+    """起動時プリセットに保存した ui_lang は CC_LANG より優先する (利用者の明示的な保存)。"""
+    from climcanvas.ui import state_io
+
+    monkeypatch.setenv("CC_LANG", "en")
+    path = state_io.STARTUP_PRESET_PATH
+    assert not path.exists(), "テストの隔離された preset.json が残っている"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"ui_lang": "ko"}), encoding="utf-8")
+    try:
+        at = AppTest.from_file(_APP_PATH, default_timeout=60)
+        at.run()
+        assert not at.exception
+        assert at.session_state["ui_lang"] == "ko"
+    finally:
+        path.unlink()

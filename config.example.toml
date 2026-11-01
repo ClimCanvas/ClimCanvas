@@ -30,3 +30,9 @@
 # inferred from the connection.
 # Environment variable: CC_MODE ("remote"; anything else means local).
 #mode = "remote"
+
+# Language of the user interface when the app starts: "ja" (default), "en",
+# "zh_CN" or "ko". Users can still switch the language in the sidebar, and a
+# language saved in the startup preset takes precedence over this setting.
+# Environment variable: CC_LANG.
+#lang = "en"

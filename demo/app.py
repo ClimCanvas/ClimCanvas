@@ -5,7 +5,8 @@
 """Entry point of the public demo (Streamlit Community Cloud).
 
 A thin wrapper around the real app (``app.py`` at the repository root). It
-switches the app into the demo mode through environment variables, generates
+switches the app into the demo mode through environment variables, starts the
+interface in English, generates
 the two sample files offered by the demo (``data/demo/sample_atmos.nc`` and
 ``sample_1d_time.nc``) when they are missing, pre-fetches the Natural Earth
 shapefiles used by the map layers, and then runs the real app in this process. Nothing
@@ -61,6 +62,8 @@ def configure_environment() -> None:
     """Demo mode: only the sample data can be opened; nothing is written to $HOME."""
     os.environ["CC_MODE"] = "demo"
     os.environ["CC_ALLOWED_DIRS"] = str(DEMO_DIR)
+    # The demo starts in English; visitors can switch the language in the sidebar.
+    os.environ.setdefault("CC_LANG", "en")
     # The server-side session storage and the startup preset are hidden in the
     # demo mode; point them away from the home directory anyway.
     scratch = Path(os.environ.get("TMPDIR", "/tmp")) / "climcanvas-demo"

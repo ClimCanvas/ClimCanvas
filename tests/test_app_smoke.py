@@ -1739,7 +1739,7 @@ def test_demo_entry_point_runs_real_app(monkeypatch):
     root = Path(__file__).resolve().parents[1]
     for name in ("CC_MODE", "CC_ALLOWED_DIRS"):
         monkeypatch.setenv(name, "")
-    for name in ("CC_SESSION_DIRS", "CLIMCANVAS_PRESET_PATH"):
+    for name in ("CC_SESSION_DIRS", "CLIMCANVAS_PRESET_PATH", "CC_LANG"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir(root)
     at = AppTest.from_file(str(root / "demo" / "app.py"), default_timeout=120)
@@ -1748,9 +1748,21 @@ def test_demo_entry_point_runs_real_app(monkeypatch):
     assert _os.environ["CC_MODE"] == "demo"
     demo_dir = root / "data" / "demo"
     assert _os.environ["CC_ALLOWED_DIRS"] == str(demo_dir)
-    assert any("公開デモ" in i.value for i in at.info)
+    # 公開デモは英語から始める (CC_LANG=en)。バナーも英語
+    assert _os.environ["CC_LANG"] == "en"
+    assert at.session_state["ui_lang"] == "en"
+    assert any("This is a public demo" in i.value for i in at.info)
+    # タイトル下の一行は公開デモ専用の長い版 (検索エンジンの説明文に拾われる前提。版も入る)
+    assert any("Public demo (ver " in c.value and "climate" in c.value and "MP4 / GIF" in c.value
+               for c in at.caption)
     # デモが開けるのは data/demo の 2 ファイルだけ (ラッパーが生成する)
     assert sorted(p.name for p in demo_dir.glob("*.nc")) == ["sample_1d_time.nc", "sample_atmos.nc"]
+    # データ未読み込みの最初の画面には見本の図 (demo/example_figure.png、ギャラリーの写し) と
+    # ギャラリーへのリンクが出る (検索エンジンとプレビュー画像が読む画面)
+    assert (root / "demo" / "example_figure.png").is_file()
+    imgs = at.get("imgs")
+    assert len(imgs) == 1 and "JRA-3Q" in imgs[0].proto.imgs[0].caption
+    assert any("gallery.html" in m.value for m in at.markdown)
     # 既定のパス欄がそのサンプルを指し、そのまま「追加」で開ける
     sample = demo_dir / "sample_atmos.nc"
     assert at.session_state["_new_file_path"] == str(sample)

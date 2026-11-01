@@ -11,7 +11,7 @@ import sys
 import streamlit as st
 
 from climcanvas.core import dataset as mc_dataset
-from climcanvas.ui.i18n import t
+from climcanvas.ui.i18n import DEFAULT_LANG, LANG_LABELS, t
 
 
 @st.cache_resource(show_spinner="netCDFファイルを読み込んでいます...")
@@ -195,6 +195,26 @@ def app_mode() -> str:
         raw = str(read_user_config().get("mode", ""))
     value = raw.strip().lower()
     return value if value in APP_MODES else "local"
+
+
+def default_ui_lang() -> str:
+    """起動時の UI 言語 ("ja" / "en" / "zh_CN" / "ko") を返す。
+
+    app.py が最初の widget より前に session_state["ui_lang"] の初期値として入れる。利用者は
+    サイドバーの selectbox でいつでも切り替えられ、起動時プリセットに ui_lang が保存されて
+    いればそちらが後で上書きする (利用者の明示的な保存を優先)。
+
+    優先順:
+      1. 環境変数 CC_LANG (設定されていれば空でも優先 — 空・不正な値は既定の ja。テストの隔離にも使う)
+      2. ~/.climcanvas/config.toml の lang = "..."
+      3. どちらも無ければ i18n.DEFAULT_LANG ("ja")
+    公開デモ (demo/app.py) は CC_LANG=en で英語から始める (docs/public_demo_plan.md)。
+    """
+    raw = os.environ.get("CC_LANG")
+    if raw is None:
+        raw = str(read_user_config().get("lang", ""))
+    value = raw.strip()
+    return value if value in LANG_LABELS else DEFAULT_LANG
 
 
 def is_demo() -> bool:

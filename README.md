@@ -99,11 +99,12 @@ the [FAQ](https://www.atmos.rcast.u-tokyo.ac.jp/climcanvas/en/faq.html) collects
 ClimCanvas needs no configuration file. An optional `~/.climcanvas/config.toml`
 on the machine that runs the app can restrict which directories netCDF files
 may be opened from (`allowed_dirs`, recommended on shared servers), list the
-directories offered for saving named sessions (`session_dirs`), and switch the
-session tabs to remote-server wording (`mode = "remote"`). Copy
-`config.example.toml` there and uncomment the lines you need; the same settings
-are available as the environment variables `CC_ALLOWED_DIRS`, `CC_SESSION_DIRS`
-and `CC_MODE` for a single run.
+directories offered for saving named sessions (`session_dirs`), switch the
+session tabs to remote-server wording (`mode = "remote"`) and choose the
+language the interface starts in (`lang`). Copy `config.example.toml` there
+and uncomment the lines you need; the same settings are available as the
+environment variables `CC_ALLOWED_DIRS`, `CC_SESSION_DIRS`, `CC_MODE` and
+`CC_LANG` for a single run.
 
 To run the tests:
 
