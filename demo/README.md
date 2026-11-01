@@ -25,7 +25,29 @@ Notes:
 
 - `requirements.txt` pins `cartopy<0.26` and `pyproj<3.8` (see its comments);
   the demo therefore runs cartopy 0.25 with PROJ 9.5.
-- Community Cloud puts an app to sleep after 12 hours without traffic; the
-  first visitor afterwards has to wake it up and wait for the restart.
+- Community Cloud puts an app to sleep after 12 hours without a visitor; the
+  first visitor afterwards would have to wake it up and wait about two minutes
+  for the restart. A scheduled GitHub Actions job visits the demo every 4 hours
+  to prevent this (see below).
 - The demo keeps nothing on the server: figures, animations, scripts and
   sessions are downloaded to the visitor's PC.
+
+## Keeping the demo awake
+
+`.github/workflows/keep-demo-awake.yml` runs `demo/keepalive.py` every 4 hours
+(and on demand from the Actions tab). The script opens the demo in headless
+Chromium (Playwright), presses the wake-up button if the sleep screen is shown,
+waits until the app has rendered and stays for 20 seconds. A plain HTTP request
+would not do: the root URL is answered by the Community Cloud shell with HTTP
+200 whether the app is awake or asleep, and the app itself runs in an iframe at
+`/~/+/` over a WebSocket (`/~/+/_stcore/health` answers `ok` while it runs).
+
+- The job fails when the app does not render within 7 minutes, so a broken
+  deployment shows up as a failed run (GitHub e-mails the person who last
+  changed the workflow file).
+- The browser cookies are kept between runs (`actions/cache`), so the visits
+  count as a single viewer in the Community Cloud analytics.
+- GitHub disables scheduled workflows in a public repository after 60 days
+  without a push; re-enable the workflow from the Actions tab if that happens.
+- To run it by hand: `python -m pip install playwright`,
+  `python -m playwright install chromium`, `python demo/keepalive.py`.
