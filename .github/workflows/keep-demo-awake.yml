@@ -23,11 +23,13 @@ concurrency:
 
 jobs:
   visit:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest is moving to Ubuntu 26.04 (Oct-Nov 2026) and Playwright's
+    # --with-deps installs distribution packages, so the image is chosen explicitly.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install Playwright with Chromium
@@ -38,7 +40,7 @@ jobs:
       # one viewer in the Community Cloud analytics. The key is unique per run; the
       # restore falls back to the most recent earlier run.
       - name: Restore the browser state of the previous run
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: keepalive-state.json
           key: keepalive-state-${{ github.run_id }}
@@ -47,7 +49,7 @@ jobs:
         run: python demo/keepalive.py --state keepalive-state.json --screenshot keepalive-failure.png
       - name: Upload the screenshot of the failed visit
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: keepalive-failure
           path: keepalive-failure.png
